@@ -59,6 +59,12 @@ namespace SymbioticInventories.Gui
         /// <summary>Plan-space Y at which the pinned region ends and scrolling begins.</summary>
         private double scrollStart;
 
+        /// <summary>
+        /// Inventories whose SlotModified we are subscribed to, with the handler that was
+        /// attached, so every compose can cleanly unsubscribe before resubscribing.
+        /// </summary>
+        private readonly List<(IInventory inv, Action<int> handler)> watched = new();
+
         public GuiDialogMasterInventory(ICoreClientAPI capi, SectionRegistry registry) : base(capi)
         {
             this.registry = registry;
@@ -103,6 +109,47 @@ namespace SymbioticInventories.Gui
         {
             base.OnGuiClosed();
             dockFocused = false;
+            UnwatchInventories();
+        }
+
+        // ---- inventory shape watching -------------------------------------------
+        //
+        // The slot grids are composed against a snapshot of each inventory's slot ids, and
+        // the backpack inventory's slot count CHANGES at runtime: picking a worn bag out of
+        // its slot removes that bag's content slots from the inventory. A grid still holding
+        // the old ids then recomposes lazily during render and dies on a vanished slot
+        // (NullReferenceException in GuiElementItemSlotGridBase.ComposeSlotOverlays - found
+        // by a real crash, clicking a worn bag in a ~60-mod game).
+        //
+        // The fix is the same thing vanilla's own inventory dialog does: watch SlotModified
+        // and recompose the moment the inventory's shape no longer matches what was composed.
+        // Recomposing immediately - not on the next tick - is the point: the stale grid must
+        // never reach another render frame.
+
+        private void WatchInventories()
+        {
+            UnwatchInventories();
+
+            var seen = new HashSet<IInventory>();
+            foreach (var s in sections)
+            {
+                var inv = s.Inventory;
+                if (inv == null || !seen.Add(inv)) continue;   // sections share inventories
+
+                int countAtCompose = inv.Count;
+                Action<int> handler = slotId =>
+                {
+                    if (inv.Count != countAtCompose || slotId >= countAtCompose) Refresh();
+                };
+                inv.SlotModified += handler;
+                watched.Add((inv, handler));
+            }
+        }
+
+        private void UnwatchInventories()
+        {
+            foreach (var (inv, handler) in watched) inv.SlotModified -= handler;
+            watched.Clear();
         }
 
         /// <summary>Called when a container docks or undocks while the window is already up.</summary>
@@ -260,6 +307,8 @@ namespace SymbioticInventories.Gui
             {
                 SingleComposer.GetScrollbar(ScrollKey)?.SetHeights((float)viewportH, (float)contentH);
             }
+
+            WatchInventories();
         }
 
         /// <summary>

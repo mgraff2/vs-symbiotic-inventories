@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Removed auto-sorting** and all its options (category priorities, spoilage filter, freshness
+  ordering). The mod surfaces information — which slot lives in which container — but arranging
+  your goods is your work, not the mod's. This also removes the one feature that rewrote real
+  chest contents with no undo.
+- **Fixed** the mount's saddlebags appearing only every other window open (the auto-open was
+  re-toggling an already-open dialog).
+- **Fixed** E opening both the vanilla and the master window; E now opens only the master window
+  while the option is on.
+- **Removed** the character/armour grid from the window (vanilla handles it better).
+- Entity container tiles (elk saddlebags) now show the attached bag's icon.
+
 ## v0.1.0 — first release
 
 One master inventory window for Vintage Story. Client-side only; no server install, no save

@@ -58,7 +58,6 @@ namespace SymbioticInventories.Gui
         private const int TipW = 300;
 
         private static CairoFont Label() => CairoFont.WhiteSmallText().WithFontSize(14);
-        private static CairoFont Header() => CairoFont.WhiteSmallText().WithFontSize(14).WithWeight(Cairo.FontWeight.Bold);
 
         // Cursor state threaded through the row helpers.
         private GuiComposer c;
@@ -102,18 +101,6 @@ namespace SymbioticInventories.Gui
             SwitchRow("adjacentSwitch", "symbioticinventories:opt-adjacent", OnToggleAdjacent, "symbioticinventories:opt-adjacent-hint");
             SliderRow("radiusSlider", "symbioticinventories:opt-adjacent-radius", OnRadiusChanged);
 
-            c.AddStaticText(Lang.Get("symbioticinventories:opt-sort-header"), Header(), ElementBounds.Fixed(0, yc + 1, W, 20));
-            c.AddHoverText(Lang.Get("symbioticinventories:opt-sort-hint"), Label(), TipW, ElementBounds.Fixed(0, yc, W, 20));
-            yc += 24;
-
-            SwitchRow("swTools", "symbioticinventories:cat-tools", v => { config.SortPrioritizeTools = v; onChanged?.Invoke(); });
-            SwitchRow("swFood", "symbioticinventories:cat-food", v => { config.SortPrioritizeFood = v; onChanged?.Invoke(); });
-            SwitchRow("swSeeds", "symbioticinventories:cat-seeds", v => { config.SortPrioritizeSeeds = v; onChanged?.Invoke(); });
-            SwitchRow("swOre", "symbioticinventories:cat-ore", v => { config.SortPrioritizeOre = v; onChanged?.Invoke(); });
-            SliderRow("spoilSlider", "symbioticinventories:opt-food-spoil", OnSpoilDaysChanged, "symbioticinventories:opt-food-spoil-hint");
-            SwitchRow("swFresh", "symbioticinventories:opt-food-freshness", v => { config.SortFoodByFreshness = v; onChanged?.Invoke(); }, "symbioticinventories:opt-food-freshness-hint");
-
-            yc += GroupGap;
             SwitchRow("mountSwitch", "symbioticinventories:opt-mount", OnToggleMount, "symbioticinventories:opt-mount-hint");
             SliderRow("entityRadSlider", "symbioticinventories:opt-entity-radius", OnEntityRadiusChanged);
 
@@ -123,23 +110,9 @@ namespace SymbioticInventories.Gui
             SingleComposer.GetSwitch("adjacentSwitch").On = config.OpenAdjacentChests;
             SingleComposer.GetSlider("radiusSlider").SetValues(
                 Math.Clamp(config.AdjacentOpenRadius, 1, 3), 1, 3, 1, " " + Lang.Get("symbioticinventories:blocks-unit"));
-            SingleComposer.GetSwitch("swTools").On = config.SortPrioritizeTools;
-            SingleComposer.GetSwitch("swFood").On = config.SortPrioritizeFood;
-            SingleComposer.GetSwitch("swSeeds").On = config.SortPrioritizeSeeds;
-            SingleComposer.GetSwitch("swOre").On = config.SortPrioritizeOre;
-            SingleComposer.GetSlider("spoilSlider").SetValues(
-                Math.Clamp(config.SortFoodMaxSpoilDays, 0, 30), 0, 30, 1, " " + Lang.Get("symbioticinventories:days-unit"));
-            SingleComposer.GetSwitch("swFresh").On = config.SortFoodByFreshness;
             SingleComposer.GetSwitch("mountSwitch").On = config.ShowMountInventory;
             SingleComposer.GetSlider("entityRadSlider").SetValues(
                 Math.Clamp(config.NearbyEntityRadius, 0, 10), 0, 10, 1, " " + Lang.Get("symbioticinventories:blocks-unit"));
-        }
-
-        private bool OnSpoilDaysChanged(int value)
-        {
-            config.SortFoodMaxSpoilDays = Math.Clamp(value, 0, 30);
-            onChanged?.Invoke();
-            return true;
         }
 
         private void OnToggleMount(bool on)

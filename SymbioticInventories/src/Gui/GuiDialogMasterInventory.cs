@@ -667,15 +667,12 @@ namespace SymbioticInventories.Gui
             composer.AddSmallButton(Lang.Get("symbioticinventories:btn-options"),
                 () => { OpenOptions?.Invoke(); return true; }, optBtn, EnumButtonStyle.Normal);
 
-            var sortBtn = ElementBounds.Fixed(x + 256, y + 2, 110, 24);
-            composer.AddSmallButton(Lang.Get("symbioticinventories:btn-sort"), OnSort, sortBtn, EnumButtonStyle.Normal);
-
             // "Open cellar" appears only while the player stands in a cellar that still has
             // unopened containers - a contextual action, no clutter otherwise.
             int cellarCount = Capture?.FindCellarContainers()?.Count ?? 0;
             if (cellarCount > 0)
             {
-                var cellarBtn = ElementBounds.Fixed(x + 374, y + 2, 150, 24);
+                var cellarBtn = ElementBounds.Fixed(x + 256, y + 2, 150, 24);
                 composer.AddSmallButton(Lang.Get("symbioticinventories:btn-cellar", cellarCount),
                     OnOpenCellar, cellarBtn, EnumButtonStyle.Normal);
             }
@@ -686,15 +683,6 @@ namespace SymbioticInventories.Gui
         {
             Capture?.OpenCellarContainers();
             // The captures fire their own recompose via OnCapturesChanged; nothing more to do.
-            return true;
-        }
-
-        /// <summary>Sorts the visible containers' contents globally, then recomposes.</summary>
-        private bool OnSort()
-        {
-            int moves = InventorySorter.Sort(capi, flowSections, Config ?? new ModConfig());
-            capi.Logger.Notification("[SymbioticInventories] Sort: {0} slot operations.", moves);
-            Refresh();
             return true;
         }
 

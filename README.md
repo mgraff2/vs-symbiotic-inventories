@@ -23,9 +23,6 @@ for screen space.
   ribbon. Hovering any cell names its container (`#3 Rugged Backpack`).
 - **Click a tile to hide** that container's ribbon; the grid reflows without resizing the window.
   **Group chips** (`×7`) hide a whole container type — all chests, all vessels — at once.
-- **Sort items** groups everything across the *visible* containers by category, orders the
-  categories and the items within them, and lays the result across the containers — starting a
-  category in the next container rather than overrunning one. Partial stacks merge for free.
 - **Open adjacent chests together**: one right-click opens every same-type container within a
   configurable radius (1–3 blocks), so a chest wall docks in one click.
 - **Mounts and boats**: optionally show the inventory of the mount you're riding, and pull in
@@ -52,7 +49,7 @@ are deliberately left alone; their windows carry readouts a slot grid can't repr
 
 ```
 SymbioticInventories/
-  src/Core/         sections, sorting, config, the unified-grid ribbon math
+  src/Core/         sections, config, the unified-grid ribbon math
   src/Integration/  Harmony capture, chain-open, entity discovery
   src/Gui/          the master window and options dialog
 tools/              test harness
@@ -87,4 +84,3 @@ Point at a non-default install with `-VintagestoryDir "C:\Path\To\Vintagestory"`
 - **Docked-left scrolls** under heavy load — a narrow locked column can't widen and stay a dock.
 - **Mount/boat auto-open** relies on entity selection-box geometry that can't be verified without
   a live elk/boat; it logs what it opens and degrades to "doesn't auto-open" on failure.
-- Sort **rearranges your real chests** — the new order is visible to everyone and has no undo.

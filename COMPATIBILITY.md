@@ -131,12 +131,12 @@ for free.
 | No Harmony conflict with Shipwright | ✅ Verified by reflection **and** co-boot on all 7 |
 | Machine dialogs pass through | ✅ Implemented, structural test |
 | Window renders, captures, docks containers | ✅ Confirmed in a real ~65-mod client (iterated over many sessions) |
-| Slot clicks / crafting / sort route correctly | ✅ Confirmed in-game |
+| Slot clicks / crafting route correctly | ✅ Confirmed in-game |
 | Layout fills the screen without dead space | ✅ Confirmed in-game (landscape flow) |
 | **Mount/boat auto-open** | ⚠️ Mechanism sound, but entity selection-box geometry is unverified in-game; logs and degrades safely |
 
 The honest summary: **the mod has been driven hard in a real, heavily-modded client over many
-iterations** — capture, rendering, docking, hide/show, sort and crafting are all confirmed
+iterations** — capture, rendering, docking, hide/show and crafting are all confirmed
 working there. The one path still flying blind is entity (mount/boat) auto-open, which cannot
 be verified without a live elk/boat and is written to log-and-degrade rather than fail.
 

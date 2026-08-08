@@ -46,8 +46,16 @@ namespace SymbioticInventories.Gui
         private readonly SectionRegistry registry;
 
         private List<InventorySection> sections = new();
+        private readonly List<InventorySection> numberedSections = new();
         private readonly List<InventorySection> flowSections = new();
         private UnifiedPlan plan = new();
+
+        /// <summary>
+        /// Sections the player has hidden by clicking their vessel tile. Keyed by section id,
+        /// so a hidden chest stays hidden across recomposes but forgets on close. The dialog
+        /// underneath stays open - hiding is a display choice, not a disconnect.
+        /// </summary>
+        private readonly HashSet<string> hiddenIds = new();
 
         private LayoutMode mode = LayoutMode.Auto;
         private bool dockFocused;
@@ -68,8 +76,9 @@ namespace SymbioticInventories.Gui
         /// <summary>Dialog-space X of the flow grid's left edge.</summary>
         private double contentX;
 
-        /// <summary>Where each vessel tile was placed, for badge overdraw. (x, y) dialog-space.</summary>
-        private readonly List<(double x, double y, InventorySection s)> iconTiles = new();
+        /// <summary>Where each vessel tile was placed: dialog-space position for the chrome
+        /// pass, live bounds for click hit-testing.</summary>
+        private readonly List<(double x, double y, ElementBounds bounds, InventorySection s)> iconTiles = new();
 
         /// <summary>Backing inventory for the vessel row's passive tiles.</summary>
         private readonly List<DummySlot> iconSlots = new();
@@ -119,13 +128,37 @@ namespace SymbioticInventories.Gui
             Compose();
         }
 
+        /// <summary>Vessel tiles are toggles: click to hide a container's ribbon, click to bring it back.</summary>
+        public override void OnMouseDown(MouseEvent args)
+        {
+            base.OnMouseDown(args);
+            if (args.Handled || !IsOpened()) return;
+
+            foreach (var (_, _, bounds, s) in iconTiles)
+            {
+                if (!bounds.PointInside(args.X, args.Y)) continue;
+
+                if (!hiddenIds.Remove(s.Id)) hiddenIds.Add(s.Id);
+                scrollY = 0;
+                Compose();
+                args.Handled = true;
+                return;
+            }
+        }
+
         // ---- composition --------------------------------------------------------
 
         private void Compose()
         {
             sections = registry.Build();
+            numberedSections.Clear();
             flowSections.Clear();
-            foreach (var s in sections) if (s.Number > 0) flowSections.Add(s);
+            foreach (var s in sections)
+            {
+                if (s.Number <= 0) continue;
+                numberedSections.Add(s);
+                if (!hiddenIds.Contains(s.Id)) flowSections.Add(s);
+            }
 
             scrollables.Clear();
             iconTiles.Clear();
@@ -159,10 +192,11 @@ namespace SymbioticInventories.Gui
                 : 0;
 
             // Vessel tiles wrap within whatever width remains beside crafting and bags.
+            // ALL numbered sections get a tile - hidden ones render dimmed and click back on.
             double iconAreaX = craftingW + bagsW;
             double iconAreaW = Math.Max(IconTile, availW - iconAreaX);
             int iconsPerRow = Math.Max(1, (int)(iconAreaW / (IconTile + 4)));
-            int iconRows = flowSections.Count == 0 ? 0 : (int)Math.Ceiling(flowSections.Count / (double)iconsPerRow);
+            int iconRows = numberedSections.Count == 0 ? 0 : (int)Math.Ceiling(numberedSections.Count / (double)iconsPerRow);
 
             double stripH = Math.Max(craftingH, Math.Max(bagSlots != null ? LayoutMetrics.Cell : 0, iconRows * (IconTile + 4))) + Pad;
 
@@ -217,20 +251,27 @@ namespace SymbioticInventories.Gui
                 composer.AddItemSlotGrid(bagSlots.Inventory, bagSlots.SendPacket, bagSlots.SlotCount, bagSlots.SlotIds, b, "grid-bags");
             }
 
-            for (int i = 0; i < flowSections.Count; i++)
+            for (int i = 0; i < numberedSections.Count; i++)
             {
-                var s = flowSections[i];
+                var s = numberedSections[i];
                 double ix = contentX + iconAreaX + (i % iconsPerRow) * (IconTile + 4);
                 double iy = (i / iconsPerRow) * (IconTile + 4);
-                iconTiles.Add((ix, iy, s));
+                var tileBounds = ElementBounds.Fixed(ix, iy, IconTile, IconTile);
+                iconTiles.Add((ix, iy, tileBounds, s));
 
                 if (s.Icon != null)
                 {
                     var slot = new DummySlot(s.Icon);
                     iconSlots.Add(slot);   // keep alive for the composer's lifetime
-                    composer.AddPassiveItemSlot(
-                        ElementBounds.Fixed(ix, iy, IconTile, IconTile),
+                    composer.AddPassiveItemSlot(tileBounds,
                         s.Inventory as InventoryBase, slot, false, "icon-" + s.Id);
+                }
+                else
+                {
+                    // No icon (entity containers): the bounds still need world coords for
+                    // hit-testing, which only parented elements get. Park an invisible
+                    // static element on them.
+                    composer.AddStaticCustomDraw(tileBounds, (ctx, surface, b) => { });
                 }
             }
 
@@ -315,6 +356,18 @@ namespace SymbioticInventories.Gui
             var optBtn = ElementBounds.Fixed(x + 138, y + 2, 110, 24);
             composer.AddSmallButton(Lang.Get("symbioticinventories:btn-options"),
                 () => { OpenOptions?.Invoke(); return true; }, optBtn, EnumButtonStyle.Normal);
+
+            var sortBtn = ElementBounds.Fixed(x + 256, y + 2, 110, 24);
+            composer.AddSmallButton(Lang.Get("symbioticinventories:btn-sort"), OnSort, sortBtn, EnumButtonStyle.Normal);
+        }
+
+        /// <summary>Sorts the visible containers' contents globally, then recomposes.</summary>
+        private bool OnSort()
+        {
+            int moves = InventorySorter.Sort(capi, flowSections);
+            capi.Logger.Notification("[SymbioticInventories] Sort: {0} slot operations.", moves);
+            Refresh();
+            return true;
         }
 
         private bool OnToggleMode()
@@ -328,20 +381,37 @@ namespace SymbioticInventories.Gui
 
         // ---- chrome -------------------------------------------------------------
 
-        /// <summary>Badges over the vessel tiles. Static draw: dialog-surface coordinates.</summary>
+        /// <summary>Badges over the vessel tiles. Static draw: dialog-surface coordinates.
+        /// Hidden sections' tiles render dimmed with a slash - clickable to bring back.</summary>
         private void DrawStripChrome(Context ctx, ElementBounds bounds)
         {
             double g = RuntimeEnv.GUIScale;
-            foreach (var (x, y, s) in iconTiles)
+            foreach (var (x, y, _, s) in iconTiles)
             {
-                // Tile outline in the section colour; badge in its corner.
+                bool hidden = hiddenIds.Contains(s.Id);
                 double tx = bounds.drawX + (x - contentX) * g;
                 double ty = bounds.drawY + y * g;
+                double t = IconTile * g;
 
-                ctx.SetSourceRGBA(s.Accent[0], s.Accent[1], s.Accent[2], 0.55);
+                double alpha = hidden ? 0.25 : 0.55;
+                ctx.SetSourceRGBA(s.Accent[0], s.Accent[1], s.Accent[2], alpha);
                 ctx.LineWidth = 1.5 * g;
-                GuiElement.RoundRectangle(ctx, tx, ty, IconTile * g, IconTile * g, 2 * g);
+                GuiElement.RoundRectangle(ctx, tx, ty, t, t, 2 * g);
                 ctx.Stroke();
+
+                if (hidden)
+                {
+                    // Darken the tile and slash it: unmistakably "off", still legible.
+                    ctx.SetSourceRGBA(0.05, 0.04, 0.03, 0.55);
+                    GuiElement.RoundRectangle(ctx, tx, ty, t, t, 2 * g);
+                    ctx.Fill();
+
+                    ctx.SetSourceRGBA(0.85, 0.30, 0.25, 0.85);
+                    ctx.LineWidth = 2 * g;
+                    ctx.MoveTo(tx + 3 * g, ty + t - 3 * g);
+                    ctx.LineTo(tx + t - 3 * g, ty + 3 * g);
+                    ctx.Stroke();
+                }
 
                 DrawBadge(ctx, tx - 3 * g, ty - 3 * g, 14 * g, s.Number, s.Accent);
             }
@@ -397,7 +467,9 @@ namespace SymbioticInventories.Gui
                     }
                 }
 
-                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.10);
+                // Strong enough that every cell visibly carries its container's colour (the
+                // user's ask), still light enough that item sprites stay readable on top.
+                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.20);
                 Trace();
                 ctx.Fill();
 
@@ -438,12 +510,14 @@ namespace SymbioticInventories.Gui
             ctx.ShowText(Lang.Get("symbioticinventories:legend-title"));
             y += 24 * g;
 
-            foreach (var s in flowSections)
+            foreach (var s in numberedSections)
             {
+                bool hidden = hiddenIds.Contains(s.Id);
                 DrawBadge(ctx, x, y, 14 * g, s.Number, s.Accent);
 
                 string caption = s.SubLabel == null ? s.Label : s.Label + " - " + s.SubLabel;
-                ctx.SetSourceRGBA(0.90, 0.88, 0.83, 0.92);
+                if (hidden) caption += " " + Lang.Get("symbioticinventories:hidden-suffix");
+                ctx.SetSourceRGBA(0.90, 0.88, 0.83, hidden ? 0.45 : 0.92);
                 ctx.SelectFontFace(GuiStyle.StandardFontName, FontSlant.Normal, FontWeight.Normal);
                 ctx.SetFontSize(12 * g);
                 ctx.MoveTo(x + 21 * g, y + 11 * g);

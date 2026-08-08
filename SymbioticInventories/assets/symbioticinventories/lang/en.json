@@ -19,6 +19,8 @@
   "btn-dock": "Dock left",
   "btn-float": "Float window",
   "btn-options": "Options",
+  "btn-sort": "Sort items",
+  "hidden-suffix": "(hidden)",
   "options-title": "Symbiotic Inventories - Options",
   "opt-adjacent": "Open adjacent chests together",
   "opt-adjacent-hint": "One right-click on a chest also opens every chest of the same kind within a few blocks, docking the whole wall into the window at once. Locked or claimed chests stay shut."

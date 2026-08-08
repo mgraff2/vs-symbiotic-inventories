@@ -88,54 +88,66 @@ namespace SymbioticInventories.Integration
         /// <summary>
         /// Opens every attachable container slot on the entity. A boat exposes several crate
         /// slots and they all open - the user asked to see all of a boat's inventory at once.
+        ///
+        /// The interact contract, read from EntityBehaviorAttachable.OnInteract IL:
+        ///   - it reads the interacting player's EntitySelection.SelectionBoxIndex (1-based),
+        ///   - subtracts 1 and calls GetSlotIndexFromSelectionBoxIndex(that 0-based index),
+        ///   - fetches inv[slotIndex]; if it holds a bag, hands off to the bag's
+        ///     IAttachedInteractions, which opens the contents dialog.
+        /// So to open a given attached slot we point the player's selection at box+1 and call
+        /// OnInteract with an EMPTY hand (a real open is a right-click with nothing held; the
+        /// held-item arg is what the attach path would consume). The first attempt passed the
+        /// container's own slot as the hand and used the box index without the -1 - both wrong.
         /// </summary>
         private void OpenEntityContainers(Entity ent)
         {
             var beh = ent.GetBehavior<EntityBehaviorAttachable>();
-            if (beh?.Inventory == null) return;
+            var inv = beh?.Inventory;
+            if (inv == null) return;
 
             var player = capi.World.Player.Entity;
-            int opens = 0;
+            var savedSel = player.EntitySelection;
+            var emptyHand = new DummySlot();
 
-            // Selection-box indices are 1-based in OnInteract (it subtracts 1 before mapping);
-            // scan a generous range and open the boxes that map to a real, non-empty container
-            // slot. Capped so a pathological entity cannot spawn dozens of dialogs.
-            for (int box = 1; box <= 32 && opens < 8; box++)
+            int opens = 0, scanned = 0;
+            var doneSlots = new HashSet<int>();
+
+            try
             {
-                ItemSlot slot;
-                try { slot = beh.GetSlotFromSelectionBoxIndex(box); }
-                catch { continue; }
-                if (slot == null || slot.Empty) continue;
-
-                // Only slots whose stack is itself a container are worth opening.
-                if (slot.Itemstack?.Collectible?.GetCollectibleInterface<IHeldBag>() == null
-                    && slot.Itemstack?.Collectible?.Attributes?["attachableToEntity"].Exists != true)
+                // Scan 0-based boxes; each maps to an attached-inventory slot index.
+                for (int box0 = 0; box0 < 48 && opens < 8; box0++)
                 {
-                    // Fall through anyway - GetCollectibleInterface is not available on all
-                    // builds; OnInteract itself is the real gate and no-ops on a non-container.
-                }
+                    int slotIndex;
+                    try { slotIndex = beh.GetSlotIndexFromSelectionBoxIndex(box0); }
+                    catch { continue; }
+                    if (slotIndex < 0 || slotIndex >= inv.Count || !doneSlots.Add(slotIndex)) continue;
 
-                try
-                {
-                    // Point the player's selection at this box, then run the entity's own
-                    // interact - the same call vanilla makes on a right-click.
-                    if (player.EntitySelection == null) player.EntitySelection = new EntitySelection();
-                    player.EntitySelection.Entity = ent;
-                    player.EntitySelection.SelectionBoxIndex = box;
+                    var slot = inv[slotIndex];
+                    if (slot == null || slot.Empty) continue;
+                    scanned++;
+
+                    var sel = new EntitySelection { Entity = ent, SelectionBoxIndex = box0 + 1 };
+                    player.EntitySelection = sel;
 
                     var handling = EnumHandling.PassThrough;
-                    beh.OnInteract(player, slot, ent.Pos.XYZ, EnumInteractMode.Interact, ref handling);
-                    opens++;
-                }
-                catch (Exception e)
-                {
-                    logger.Warning("[SymbioticInventories] Entity container open failed on {0} box {1}: {2}",
-                        ent.Code, box, e.Message);
+                    beh.OnInteract(player, emptyHand, ent.Pos.XYZ, EnumInteractMode.Interact, ref handling);
+                    if (handling != EnumHandling.PassThrough) opens++;
                 }
             }
+            catch (Exception e)
+            {
+                logger.Warning("[SymbioticInventories] Entity container open error on {0}: {1}", ent.Code, e.Message);
+            }
+            finally
+            {
+                player.EntitySelection = savedSel;
+            }
 
-            if (opens > 0)
-                logger.Notification("[SymbioticInventories] Auto-opened {0} container(s) on {1}.", opens, ent.GetName());
+            // Always log the outcome - this is the one capture path unverifiable without a
+            // live entity, so the log is how a real test tells us what actually happened.
+            logger.Notification(
+                "[SymbioticInventories] {0}: scanned {1} filled attach-slot(s), {2} opened a container.",
+                ent.GetName(), scanned, opens);
         }
     }
 }

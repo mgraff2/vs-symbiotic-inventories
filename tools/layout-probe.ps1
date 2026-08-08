@@ -143,15 +143,35 @@ function Test-Plan($name, $plan, $budget) {
     # every section placed exactly once
     $placed = $boxes.Count
 
-    # overlap check
+    # Overlap check against the TRUE silhouette, not the bounding box. A non-divisor width
+    # makes a section L-shaped (partial, left-aligned last row), and later sections are
+    # allowed - encouraged - to interlock into the notch. Bounding boxes would flag every
+    # legitimate interlock as an overlap.
+    function Get-Parts($b) {
+        $slots = $b.Section.SlotIds.Length
+        $foot = if ($b.Cols -gt 0) { $slots % $b.Cols } else { 0 }
+        if ($foot -gt 0 -and $b.Rows -gt 1) {
+            @(
+                @{ X = $b.X; Y = $b.Y; W = $b.W; H = $b.H - $Cell },
+                @{ X = $b.X; Y = $b.Y + $b.H - $Cell; W = $foot * $Cell; H = $Cell }
+            )
+        } else {
+            @(@{ X = $b.X; Y = $b.Y; W = $b.W; H = $b.H })
+        }
+    }
+
     foreach ($i in 0..([Math]::Max($boxes.Count - 1, 0))) {
         if ($boxes.Count -eq 0) { break }
         for ($j = $i + 1; $j -lt $boxes.Count; $j++) {
             $a = $boxes[$i]; $b = $boxes[$j]
-            $overlapX = ($a.X -lt $b.X + $b.W - 0.01) -and ($b.X -lt $a.X + $a.W - 0.01)
-            $overlapY = ($a.Y -lt $b.Y + $b.H - 0.01) -and ($b.Y -lt $a.Y + $a.H - 0.01)
-            if ($overlapX -and $overlapY) {
-                $script:failures += "$name : '$($a.Section.Label)' overlaps '$($b.Section.Label)'"
+            foreach ($pa in (Get-Parts $a)) {
+                foreach ($pb in (Get-Parts $b)) {
+                    $overlapX = ($pa.X -lt $pb.X + $pb.W - 0.01) -and ($pb.X -lt $pa.X + $pa.W - 0.01)
+                    $overlapY = ($pa.Y -lt $pb.Y + $pb.H - 0.01) -and ($pb.Y -lt $pa.Y + $pa.H - 0.01)
+                    if ($overlapX -and $overlapY) {
+                        $script:failures += "$name : '$($a.Section.Label)' overlaps '$($b.Section.Label)'"
+                    }
+                }
             }
         }
     }
@@ -208,8 +228,12 @@ function Show-Map($plan, $budget) {
         $g = $glyphs[$i % $glyphs.Length]; $i++
         $c0 = [int][math]::Round($b.X / $Cell)
         $r0 = [int][math]::Round($b.Y / $Cell)
+        $slots = $b.Section.SlotIds.Length
+        $foot = if ($b.Cols -gt 0) { $slots % $b.Cols } else { 0 }
         for ($r = $r0; $r -lt $r0 + $b.Rows -and $r -lt $rows; $r++) {
-            for ($c = $c0; $c -lt $c0 + $b.Cols -and $c -lt $cols; $c++) {
+            # Last row of an L draws only its foot - the map should show the notch.
+            $rowCols = if ($foot -gt 0 -and $r -eq $r0 + $b.Rows - 1) { $foot } else { $b.Cols }
+            for ($c = $c0; $c -lt $c0 + $rowCols -and $c -lt $cols; $c++) {
                 if ($r -ge 0 -and $c -ge 0) { $grid[$r][$c] = $g }
             }
         }

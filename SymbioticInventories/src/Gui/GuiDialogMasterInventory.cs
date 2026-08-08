@@ -339,23 +339,38 @@ namespace SymbioticInventories.Gui
             if (mode != LayoutMode.Auto) return SectionPacker.Pack(sections, budget);
 
             double screenAvail = budget.MaxWidth;
-            LayoutPlan widest = null;
+            LayoutPlan best = null;
+            double bestArea = double.MaxValue;
 
             // Step outward from the readable default all the way to the physical screen -
-            // not to a hardcoded ceiling. A 1440p monitor has past 30 columns available, and
-            // stopping at 26 left a 12-section load scrolling beside unused screen.
+            // not to a hardcoded ceiling. Among caps whose layout fits without scrolling,
+            // take the DENSEST bounding box (least width x height), not the first fit: the
+            // narrowest fit maximises height, producing a screen-tall jagged column while a
+            // slightly wider layout would be a compact block.
             for (int capCols = 18; ; capCols += 4)
             {
                 budget.MaxWidth = Math.Min(capCols * LayoutMetrics.Cell, screenAvail);
                 var candidate = SectionPacker.Pack(sections, budget);
-                if (!candidate.Overflows) return candidate;
-                widest = candidate;
+
+                if (!candidate.Overflows)
+                {
+                    double area = Math.Max(candidate.Width, 1) * Math.Max(candidate.Height, 1);
+                    if (area < bestArea - 0.001)
+                    {
+                        bestArea = area;
+                        best = candidate;
+                    }
+                }
+                else if (best == null)
+                {
+                    best = candidate;   // all-overflow fallback: the widest scrolls least
+                }
 
                 // The screen itself is the last cap worth trying.
                 if (budget.MaxWidth >= screenAvail - 0.001) break;
             }
 
-            return widest;
+            return best;
         }
 
         /// <summary>
@@ -473,15 +488,50 @@ namespace SymbioticInventories.Gui
             double w = box.W * g;
             double h = box.H * g;
 
-            ctx.SetSourceRGBA(a[0], a[1], a[2], 0.15);
-            GuiElement.RoundRectangle(ctx, x, y, w, h, 3 * g);
-            ctx.Fill();
+            // Sections may be L-shaped: a non-divisor width leaves a partial, left-aligned
+            // last row (the engine's slot grid draws it natively). The plate has to trace
+            // that true silhouette - a bounding-box plate would visually claim the notch
+            // that a neighbouring section is interlocked into.
+            int foot = box.Cols > 0 ? s.SlotCount % box.Cols : 0;
+            bool isL = foot > 0 && box.Rows > 1;
 
-            // Border stroke: the boundary cue the low-alpha fill cannot provide.
-            ctx.SetSourceRGBA(a[0], a[1], a[2], 0.55);
-            ctx.LineWidth = 1.5 * g;
-            GuiElement.RoundRectangle(ctx, x, y, w, h, 3 * g);
-            ctx.Stroke();
+            if (isL)
+            {
+                double cell = LayoutMetrics.Cell * g;
+                double footW = foot * cell;
+
+                void TraceL()
+                {
+                    ctx.MoveTo(x, y);
+                    ctx.LineTo(x + w, y);
+                    ctx.LineTo(x + w, y + h - cell);
+                    ctx.LineTo(x + footW, y + h - cell);
+                    ctx.LineTo(x + footW, y + h);
+                    ctx.LineTo(x, y + h);
+                    ctx.ClosePath();
+                }
+
+                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.15);
+                TraceL();
+                ctx.Fill();
+
+                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.55);
+                ctx.LineWidth = 1.5 * g;
+                TraceL();
+                ctx.Stroke();
+            }
+            else
+            {
+                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.15);
+                GuiElement.RoundRectangle(ctx, x, y, w, h, 3 * g);
+                ctx.Fill();
+
+                // Border stroke: the boundary cue the low-alpha fill cannot provide.
+                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.55);
+                ctx.LineWidth = 1.5 * g;
+                GuiElement.RoundRectangle(ctx, x, y, w, h, 3 * g);
+                ctx.Stroke();
+            }
 
             ctx.SetSourceRGBA(a[0], a[1], a[2], 0.85);
             GuiElement.RoundRectangle(ctx, x, y, 3 * g, h, 1 * g);

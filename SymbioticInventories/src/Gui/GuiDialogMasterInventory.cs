@@ -332,12 +332,23 @@ namespace SymbioticInventories.Gui
                 ? Math.Ceiling(crafting.SlotCount / (double)crafting.FixedColumns) * LayoutMetrics.Cell
                 : 0;
 
-            // Vessel row: group chips + tiles, wrapping within the width beside crafting and
-            // bags. ALL numbered sections get a tile - hidden ones render dimmed. Each group
-            // (chests / vessels / backpacks / trunks) is prefixed by a narrow chip that
-            // toggles the whole group at once.
             double iconAreaX = craftingW + bagsW;
-            double iconAreaW = Math.Max(IconTile + ChipW, availW - iconAreaX);
+
+            // ---- the flow WIDTH is chosen first, and everything else fits inside it -------
+            // The strip used to wrap to the full available width, making the window wide while
+            // the grid stayed narrow - a lake of empty space to the right (user screenshot).
+            // Now the grid width leads: it fills the landscape, and the strip wraps within it,
+            // so the window is exactly grid-wide with nothing dangling.
+            int cols = docked
+                ? Math.Max(4, (int)(availW / LayoutMetrics.Cell))
+                : UnifiedGrid.ChooseCols(frameSlots, availW, availH - craftingH - Pad * 2);
+            plan = UnifiedGrid.Compute(flowSections, cols);
+            double flowW = plan.Cols * LayoutMetrics.Cell;
+
+            // Vessel row: group chips + tiles, wrapping within the grid width beside crafting
+            // and bags. ALL numbered sections get a tile - hidden ones render dimmed. Each
+            // group (chests / vessels / backpacks) is prefixed by a narrow toggle chip.
+            double iconAreaW = Math.Max(IconTile + ChipW, flowW - iconAreaX);
 
             var stripItems = new List<(bool isChip, InventorySection s, List<InventorySection> members, double w)>();
             {
@@ -354,7 +365,6 @@ namespace SymbioticInventories.Gui
                 }
             }
 
-            // Wrap the variable-width sequence into rows.
             var stripPos = new List<(double x, double y)>();
             {
                 double sx = 0, sy = 0;
@@ -369,13 +379,6 @@ namespace SymbioticInventories.Gui
 
             double stripH = Math.Max(craftingH, Math.Max(bagSlots != null ? LayoutMetrics.Cell : 0, iconRows * (IconTile + 4))) + Pad;
 
-            // ---- the flow -------------------------------------------------------
-            int cols = docked
-                ? Math.Max(4, (int)(availW / LayoutMetrics.Cell))
-                : UnifiedGrid.ChooseCols(frameSlots, availW, availH - stripH);
-            plan = UnifiedGrid.Compute(flowSections, cols);
-
-            double flowW = plan.Cols * LayoutMetrics.Cell;
             contentH = plan.Rows * LayoutMetrics.Cell;
             double frameH = Math.Ceiling(frameSlots / (double)Math.Max(cols, 1)) * LayoutMetrics.Cell;
             scrollStart = stripH;
@@ -385,7 +388,7 @@ namespace SymbioticInventories.Gui
             scrollY = Math.Clamp(scrollY, 0, Math.Max(0, contentH - viewportH));
 
             contentX = railW;
-            double bodyW = contentX + Math.Max(flowW, iconAreaX + 4 * LayoutMetrics.Cell) + (scrolls ? 20 : 0);
+            double bodyW = contentX + flowW + (scrolls ? 20 : 0);
             double bodyH = stripH + Math.Max(viewportH, 60) + FooterH + Pad;
 
             var bgBounds = ElementBounds.Fixed(0, 0, bodyW, bodyH)

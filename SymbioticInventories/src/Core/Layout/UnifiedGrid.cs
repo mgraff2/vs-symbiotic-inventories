@@ -124,19 +124,28 @@ namespace SymbioticInventories.Core.Layout
         }
 
         /// <summary>
-        /// Columns that make the flow fit the given viewport without scrolling, if any width
-        /// can: enough columns that the row count fits the height, but never more than the
-        /// window is wide. Fluidity as arithmetic - no candidate search.
+        /// Columns for the flow, chosen to fill the landscape instead of stacking into a tall
+        /// column. Screens are wider than tall, so the grid should be too: aim for the grid's
+        /// aspect to match the viewport's - cols*rows ≈ N and cols/rows ≈ screenW/screenH give
+        /// cols ≈ sqrt(N · screenAspect). Then guarantee it is at least wide enough not to
+        /// scroll when the height could hold it, and never wider than the screen. Fluidity as
+        /// arithmetic - no candidate search.
         /// </summary>
         public static int ChooseCols(int totalSlots, double maxWidth, double maxHeight, int minCols = 8)
         {
             int colsScreen = Math.Max(minCols, (int)(maxWidth / LayoutMetrics.Cell));
             if (totalSlots <= 0) return Math.Min(12, colsScreen);
 
-            int maxRows = Math.Max(1, (int)(maxHeight / LayoutMetrics.Cell));
-            int colsForFit = (int)Math.Ceiling(totalSlots / (double)maxRows);
+            int rowsScreen = Math.Max(1, (int)(maxHeight / LayoutMetrics.Cell));
 
-            return Math.Clamp(Math.Max(colsForFit, 12), minCols, colsScreen);
+            // Landscape target: match the viewport's proportions.
+            double aspect = colsScreen / (double)rowsScreen;
+            int target = (int)Math.Ceiling(Math.Sqrt(totalSlots * aspect));
+
+            // Don't scroll if the screen could hold everything in rowsScreen rows.
+            int colsForFit = (int)Math.Ceiling(totalSlots / (double)rowsScreen);
+
+            return Math.Clamp(Math.Max(target, colsForFit), minCols, colsScreen);
         }
     }
 }

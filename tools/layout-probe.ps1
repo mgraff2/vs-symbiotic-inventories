@@ -185,6 +185,29 @@ function Show-Map($plan) {
 }
 
 $compute = $TGrid.GetMethod('Compute')
+$chooseCols = $TGrid.GetMethod('ChooseCols')
+$Cell = $si.GetType('SymbioticInventories.Core.Layout.LayoutMetrics').GetField('Cell').GetValue($null)
+
+# ChooseCols must produce LANDSCAPE grids (wider than tall) on landscape viewports - the
+# whole point of the aspect-fill: a tall portrait column wastes the wide screen and forces
+# scrolling. Test across common screens and container loads.
+Write-Host "ChooseCols aspect (landscape viewports)" -ForegroundColor Cyan
+foreach ($scr in @(@(1920, 1080), @(2560, 1440), @(1600, 900))) {
+    $availW = $scr[0] * 0.92 - 20
+    $availH = $scr[1] * 0.92 - 140
+    foreach ($n in @(48, 124, 296, 450)) {
+        $cols = $chooseCols.Invoke($null, @([int]$n, [double]$availW, [double]$availH, 8))
+        $rows = [math]::Ceiling($n / $cols)
+        if ($cols -lt $rows) {
+            $failures += "ChooseCols $($scr[0])x$($scr[1]) N=$n gave $cols x $rows - portrait, not landscape"
+        }
+        # Must not exceed the screen width.
+        if ($cols * $Cell -gt $availW + 0.01) {
+            $failures += "ChooseCols $($scr[0])x$($scr[1]) N=$n gave $cols cols exceeding screen width"
+        }
+    }
+}
+Write-Host ""
 
 foreach ($scenarioName in @('minimal', 'typical', 'boat', 'warehouse', 'heavy')) {
     foreach ($cols in @(24, 8)) {

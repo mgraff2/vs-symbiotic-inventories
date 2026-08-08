@@ -130,14 +130,20 @@ for free.
 | Client-only gate intact (server-side silence) | ✅ Enforced by the exactly-one-mention check |
 | No Harmony conflict with Shipwright | ✅ Verified by reflection **and** co-boot on all 7 |
 | Machine dialogs pass through | ✅ Implemented, structural test |
-| **Window renders correctly in-game** | ❌ **Not tested** — needs a game launch |
-| **Slot clicks route to the right inventory** | ❌ **Not tested** |
-| **Capture suppresses the original window cleanly** | ❌ **Not tested** |
-| **Sections release when a container closes** | ⚠️ Bug found and fixed (§7); fix unverified in-game |
+| Window renders, captures, docks containers | ✅ Confirmed in a real ~65-mod client (iterated over many sessions) |
+| Slot clicks / crafting / sort route correctly | ✅ Confirmed in-game |
+| Layout fills the screen without dead space | ✅ Confirmed in-game (landscape flow) |
+| **Mount/boat auto-open** | ⚠️ Mechanism sound, but entity selection-box geometry is unverified in-game; logs and degrades safely |
 
-The honest summary: **the automated gates are green across the whole supported range, and the
-mod has still never been run.** Gates 1 and 2 cannot see a pixel. Until the manual checklist in
-§6 is run, this is untested software that boots cleanly.
+The honest summary: **the mod has been driven hard in a real, heavily-modded client over many
+iterations** — capture, rendering, docking, hide/show, sort and crafting are all confirmed
+working there. The one path still flying blind is entity (mount/boat) auto-open, which cannot
+be verified without a live elk/boat and is written to log-and-degrade rather than fail.
+
+Several real bugs were found only by playing and fixed in turn: a crash clicking a worn bag
+(inventory shape change), two render coordinate-space bugs (clipped grids and off-surface
+chrome), a client-killing shader crash from the hover label, non-functional crafting, and the
+tile-click and title-overlap issues. Each has a commit explaining the cause.
 
 ---
 

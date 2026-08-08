@@ -1,62 +1,69 @@
 # Symbiotic Inventories
 
 One inventory window for Vintage Story. Chests, clay vessels, baskets, ground-stored bags,
-saddlebags and boat crates all dock into a single window alongside your worn backpacks and
-the crafting grid — each as a colour-shaded, numbered section, so you can tell at a glance
-which bag or chest a slot belongs to.
+saddlebags and boat crates all pour into a single window alongside your worn backpacks and
+the crafting grid — one dense, colour-coded grid instead of a dozen floating boxes fighting
+for screen space.
 
-**Status: v0.1.0 — automated gates green across 1.22.0–1.22.6, but never run in-game.**
-Boots clean on all seven game versions, solo and alongside Shipwright, and all five API
-bindings resolve on every one. Rendering and click routing remain unproven until someone
-launches the game. See [COMPATIBILITY.md](COMPATIBILITY.md) §5 for exactly what is and is not
-proven.
+**Status: v0.1.0** — client-side only; your server needs nothing and no save data is altered.
 
 ---
 
-## The idea
+## What it does
 
-Vintage Story scatters storage across a dozen floating windows that fight for screen space.
-Worse, the player backpack inventory is one flat slot list — nothing on screen tells you that
-slots 12–19 are the bag you are about to drop. Symbiotic Inventories fixes both:
+- **One combined grid.** Every open container's slots flow into a single row-major grid. Each
+  container is a contiguous **ribbon** of coloured cells — the cell backgrounds are tinted in
+  the container's colour, the way a text selection spans line breaks — so you always know which
+  chest a slot belongs to.
+- **The window is always inventory-shaped.** The grid fills your screen's width (landscape) and
+  reflows to whatever's open, so it stays dense with no wasted space and rarely needs to scroll.
+- **Crafting grid is always present**, top-left, with its output slot. Anything left in it
+  returns to your inventory when you close the window.
+- **A vessel row** across the top: one icon tile per open container, badge-numbered to match its
+  ribbon. Hovering any cell names its container (`#3 Rugged Backpack`).
+- **Click a tile to hide** that container's ribbon; the grid reflows without resizing the window.
+  **Group chips** (`×7`) hide a whole container type — all chests, all vessels — at once.
+- **Sort items** groups everything across the *visible* containers by category, orders the
+  categories and the items within them, and lays the result across the containers — starting a
+  category in the next container rather than overrunning one. Partial stacks merge for free.
+- **Open adjacent chests together**: one right-click opens every same-type container within a
+  configurable radius (1–3 blocks), so a chest wall docks in one click.
+- **Mounts and boats**: optionally show the inventory of the mount you're riding, and pull in
+  pack animals / moored boats within up to 10 blocks — a boat opens all its crates at once.
 
-- **One window.** Container GUIs are intercepted and their slots re-drawn inside the master
-  window. No more window-position juggling.
-- **Numbered, shaded sections.** Every bag and container gets a number badge, an accent colour,
-  and a shaded backing plate spanning exactly its slots. When you need to dump backpack 3, you
-  can see which slots that is.
-- **Crafting grid is always present.**
+## Two layouts
+
+- **Floating** (default): a centered window that fills the screen's width.
+- **Docked left**: locks to the left edge and stays up like a HUD while you play — the mouse
+  stays with the game. Press the focus key (default **N**) to reach into it; press again to
+  hand the mouse back.
+
+Default window hotkey **B**; both keys rebindable in Controls. The window also opens
+automatically when you open any container. **Options** (footer button) holds the toggles.
 
 ## How it works
 
-The whole mod is client-side; the server needs nothing.
-
-The key insight is that *every* plain container in the game funnels through one of two dialog
-classes — `GuiDialogBlockEntityInventory` for blocks and `GuiDialogCreatureContents` for
-entities. Capturing those two gives near-universal coverage, including third-party mods,
-without a single mod-specific code path.
-
-Captured dialogs are **not closed**. Their open/close handshake with the server is what keeps
-the inventory synced to the client, so the original dialog is left alive and registered — only
-its *rendering* is suppressed and its composer parked off-screen so it cannot eat clicks. Slot
-operations are routed back through the dialog's own `DoSendPacket`, so the correct packet
-envelope and id offset are preserved for containers this mod has never heard of.
-
-Machines (firepit, quern, barrel, oven, traders, modded machinery) are deliberately left alone —
-their windows carry progress bars and readouts a slot grid cannot represent.
+Client-side only. Every plain container in the game funnels through one of two dialog classes —
+`GuiDialogBlockEntityInventory` (blocks) or `GuiDialogCreatureContents` (entities). The mod
+captures those two via Harmony, reads the inventory, and routes slot operations back through
+each dialog's own packet sender — so containers from mods it has never seen work unchanged, and
+the server still enforces locks, claims and range. Machines (firepit, quern, barrel, traders)
+are deliberately left alone; their windows carry readouts a slot grid can't represent.
 
 ```
 SymbioticInventories/
-  src/Core/         InventorySection, SectionPalette, SectionRegistry   - what to draw
-  src/Integration/  DialogCaptureService, CapturedDialog                - what to capture
-  src/Gui/          GuiDialogMasterInventory                            - the window
+  src/Core/         sections, sorting, config, the unified-grid ribbon math
+  src/Integration/  Harmony capture, chain-open, entity discovery
+  src/Gui/          the master window and options dialog
 tools/              test harness
-dist/               packaged mod zip
 ```
+
+See [COMPATIBILITY.md](COMPATIBILITY.md) for the tested version/mod matrix and
+[CLAUDE.md](CLAUDE.md) for the architecture and the gotchas learned the hard way.
 
 ## Building
 
-Requires the **.NET 10 SDK** — every 1.22.x game assembly targets `net10.0`, and net9 cannot
-compile against them.
+Requires the **.NET 10 SDK** — every 1.22.x game assembly targets `net10.0`.
 
 ```powershell
 .\package.ps1              # build + zip into dist\
@@ -68,32 +75,16 @@ Point at a non-default install with `-VintagestoryDir "C:\Path\To\Vintagestory"`
 ## Testing
 
 ```powershell
-.\tools\binding-sweep.ps1     # resolve the 5 API bindings on every cached version (seconds)
+.\tools\layout-probe.ps1      # ribbon/flow math, headless (seconds)
+.\tools\binding-sweep.ps1     # the 5 API bindings resolve on every cached version
 .\tools\compat-test.ps1       # headless server boot, solo + each companion mod
-.\tools\version-sweep.ps1     # the above against 1.22.0 .. 1.22.6 (~7 min)
+.\tools\version-sweep.ps1     # the above across 1.22.0 .. 1.22.6 (~7 min)
+.\tools\client-probe.ps1      # launch a real client into a test world (needs a desktop)
 ```
 
-The two sweeps are complements, not alternatives: `version-sweep` covers **load time** across
-versions, `binding-sweep` covers **patch time**. Our Harmony patches are client-side and never
-run on a dedicated server, so a renamed private field would sail straight through a server boot.
-Neither can see a pixel — that stays a manual checklist. See [CLAUDE.md](CLAUDE.md) for the
-full gate description.
+## Known limits
 
-## Usage
-
-Two layouts, toggled by the footer button:
-
-- **Floating** (default): a centered window; opened storage jigsaw-packs for density.
-- **Docked left**: the window locks to the left edge and stays up like a HUD while you play —
-  the mouse stays with the game. Press the focus key (default **N**) to get the cursor into
-  it; press again to hand the mouse back.
-
-Default window hotkey **B**; both keys rebindable in Controls. The window also opens
-automatically when you open any captured container.
-
-## Known gaps
-
-- **Rendering unverified in-game.** The packing math is covered headlessly by
-  `tools/layout-probe.ps1`, but nothing has confirmed how it actually looks.
-- **Mount/vehicle sections appear only once their container is opened.** Discovery of a mounted
-  entity's attached containers without opening them is not implemented.
+- **Docked-left scrolls** under heavy load — a narrow locked column can't widen and stay a dock.
+- **Mount/boat auto-open** relies on entity selection-box geometry that can't be verified without
+  a live elk/boat; it logs what it opens and degrades to "doesn't auto-open" on failure.
+- Sort **rearranges your real chests** — the new order is visible to everyone and has no undo.

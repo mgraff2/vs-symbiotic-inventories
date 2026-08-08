@@ -33,9 +33,15 @@ namespace SymbioticInventories.Integration
         private ILogger logger;
         private DialogCaptureService capture;
 
-        /// <summary>Entities we have already auto-opened this window session, so the tick
-        /// does not re-fire OnInteract every 500 ms.</summary>
-        private readonly HashSet<long> opened = new();
+        /// <summary>Entities whose open interaction we have already fired and are waiting to
+        /// see captured. Cleared the moment the dialog is actually captured, so a later close
+        /// (window close, dismount, walking out of range) lets us re-open cleanly.</summary>
+        private readonly HashSet<long> pendingOpen = new();
+
+        /// <summary>Entities whose container we have seen captured at least once since the last
+        /// open interaction. Used to detect the shown -> closed transition without mistaking an
+        /// in-flight round-trip for a closed dialog.</summary>
+        private readonly HashSet<long> everShown = new();
 
         public void Start(ICoreClientAPI api, ModConfig cfg, DialogCaptureService cap, ILogger log)
         {
@@ -45,8 +51,13 @@ namespace SymbioticInventories.Integration
             logger = log;
         }
 
-        /// <summary>Clears the per-session open memory (call when the window closes).</summary>
-        public void Reset() => opened.Clear();
+        /// <summary>Full reset of the open memory. No longer tied to the window closing - the
+        /// per-entity capture state is self-healing - but kept for an explicit clean slate.</summary>
+        public void Reset()
+        {
+            pendingOpen.Clear();
+            everShown.Clear();
+        }
 
         /// <summary>
         /// Finds and opens eligible entity containers. Cheap to call repeatedly - it skips
@@ -77,11 +88,29 @@ namespace SymbioticInventories.Integration
 
             foreach (var ent in candidates)
             {
-                // Already showing this entity's inventory (its dialog persists across a window
-                // close): do not re-run the open, which would toggle it shut. This is the fix
-                // for the mount inventory appearing only every other open.
-                if (capture.IsEntityCaptured(ent.EntityId)) continue;
-                if (!opened.Add(ent.EntityId)) continue;   // round-trip dedup within a session
+                long id = ent.EntityId;
+
+                if (capture.IsEntityCaptured(id))
+                {
+                    // Its dialog is up and adopted into the window. Nothing to do, but remember
+                    // that it is shown and stop waiting on the open we fired - so if it later
+                    // closes (window close, dismount, out of range) we notice and re-open.
+                    everShown.Add(id);
+                    pendingOpen.Remove(id);
+                    continue;
+                }
+
+                // Not currently captured. If we had shown it and it has now gone, the open
+                // interaction that used to guard against a re-fire is stale - forget it so the
+                // block below re-opens the container. This is what fixes the mount saddlebags
+                // appearing only every other window open: the previous code left the entity in
+                // the "already opened" set until a timed Reset cleared it, so alternate opens
+                // re-toggled the dialog shut.
+                if (everShown.Remove(id)) pendingOpen.Remove(id);
+
+                // pendingOpen guards the multiplayer round-trip: we fired the open but the
+                // dialog has not come back yet, so do not fire again (that would toggle it).
+                if (!pendingOpen.Add(id)) continue;
                 OpenEntityContainers(ent);
             }
         }

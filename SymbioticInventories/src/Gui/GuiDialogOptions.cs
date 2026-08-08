@@ -63,6 +63,27 @@ namespace SymbioticInventories.Gui
             var radSlider = ElementBounds.Fixed(LabelX + SliderLabelW, y, W - LabelX - SliderLabelW, SliderH);
             y += SliderH + GroupGap;
 
+            var sortHeader = ElementBounds.Fixed(0, y + 2, W, 26);
+            y += 30;
+
+            // Two category switches per row to keep the dialog compact.
+            double col2 = W / 2;
+            var toolsSwitch = ElementBounds.Fixed(0, y, SwitchSize, SwitchSize);
+            var toolsLabel = ElementBounds.Fixed(LabelX, y + 4, col2 - LabelX, 26);
+            var foodSwitch = ElementBounds.Fixed(col2, y, SwitchSize, SwitchSize);
+            var foodLabel = ElementBounds.Fixed(col2 + LabelX, y + 4, W - col2 - LabelX, 26);
+            y += SwitchSize + RowGap;
+
+            var seedsSwitch = ElementBounds.Fixed(0, y, SwitchSize, SwitchSize);
+            var seedsLabel = ElementBounds.Fixed(LabelX, y + 4, col2 - LabelX, 26);
+            var oreSwitch = ElementBounds.Fixed(col2, y, SwitchSize, SwitchSize);
+            var oreLabel = ElementBounds.Fixed(col2 + LabelX, y + 4, W - col2 - LabelX, 26);
+            y += SwitchSize + RowGap;
+
+            var spoilLabel = ElementBounds.Fixed(LabelX, y + 2, SliderLabelW, 26);
+            var spoilSlider = ElementBounds.Fixed(LabelX + SliderLabelW, y, W - LabelX - SliderLabelW, SliderH);
+            y += SliderH + GroupGap;
+
             var mountSwitch = ElementBounds.Fixed(0, y, SwitchSize, SwitchSize);
             var mountLabel = ElementBounds.Fixed(LabelX, y + 4, W - LabelX, 26);
             y += SwitchSize + RowGap;
@@ -86,6 +107,19 @@ namespace SymbioticInventories.Gui
                     .AddStaticText(Lang.Get("symbioticinventories:opt-adjacent-radius"),
                         CairoFont.WhiteSmallishText(), radLabel)
                     .AddSlider(OnRadiusChanged, radSlider, "radiusSlider")
+                    .AddStaticText(Lang.Get("symbioticinventories:opt-sort-header"),
+                        CairoFont.WhiteSmallishText().WithWeight(Cairo.FontWeight.Bold), sortHeader)
+                    .AddSwitch(v => { config.SortPrioritizeTools = v; onChanged?.Invoke(); }, toolsSwitch, "swTools")
+                    .AddStaticText(Lang.Get("symbioticinventories:cat-tools"), CairoFont.WhiteSmallishText(), toolsLabel)
+                    .AddSwitch(v => { config.SortPrioritizeFood = v; onChanged?.Invoke(); }, foodSwitch, "swFood")
+                    .AddStaticText(Lang.Get("symbioticinventories:cat-food"), CairoFont.WhiteSmallishText(), foodLabel)
+                    .AddSwitch(v => { config.SortPrioritizeSeeds = v; onChanged?.Invoke(); }, seedsSwitch, "swSeeds")
+                    .AddStaticText(Lang.Get("symbioticinventories:cat-seeds"), CairoFont.WhiteSmallishText(), seedsLabel)
+                    .AddSwitch(v => { config.SortPrioritizeOre = v; onChanged?.Invoke(); }, oreSwitch, "swOre")
+                    .AddStaticText(Lang.Get("symbioticinventories:cat-ore"), CairoFont.WhiteSmallishText(), oreLabel)
+                    .AddStaticText(Lang.Get("symbioticinventories:opt-food-spoil"),
+                        CairoFont.WhiteSmallishText(), spoilLabel)
+                    .AddSlider(OnSpoilDaysChanged, spoilSlider, "spoilSlider")
                     .AddSwitch(OnToggleMount, mountSwitch, "mountSwitch")
                     .AddStaticText(Lang.Get("symbioticinventories:opt-mount"),
                         CairoFont.WhiteSmallishText(), mountLabel)
@@ -100,9 +134,22 @@ namespace SymbioticInventories.Gui
             SingleComposer.GetSwitch("adjacentSwitch").On = config.OpenAdjacentChests;
             SingleComposer.GetSlider("radiusSlider").SetValues(
                 Math.Clamp(config.AdjacentOpenRadius, 1, 3), 1, 3, 1, " " + Lang.Get("symbioticinventories:blocks-unit"));
+            SingleComposer.GetSwitch("swTools").On = config.SortPrioritizeTools;
+            SingleComposer.GetSwitch("swFood").On = config.SortPrioritizeFood;
+            SingleComposer.GetSwitch("swSeeds").On = config.SortPrioritizeSeeds;
+            SingleComposer.GetSwitch("swOre").On = config.SortPrioritizeOre;
+            SingleComposer.GetSlider("spoilSlider").SetValues(
+                Math.Clamp(config.SortFoodMaxSpoilDays, 0, 30), 0, 30, 1, " " + Lang.Get("symbioticinventories:days-unit"));
             SingleComposer.GetSwitch("mountSwitch").On = config.ShowMountInventory;
             SingleComposer.GetSlider("entityRadSlider").SetValues(
                 Math.Clamp(config.NearbyEntityRadius, 0, 10), 0, 10, 1, " " + Lang.Get("symbioticinventories:blocks-unit"));
+        }
+
+        private bool OnSpoilDaysChanged(int value)
+        {
+            config.SortFoodMaxSpoilDays = Math.Clamp(value, 0, 30);
+            onChanged?.Invoke();
+            return true;
         }
 
         private void OnToggleMount(bool on)

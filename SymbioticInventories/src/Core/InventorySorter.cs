@@ -39,13 +39,46 @@ namespace SymbioticInventories.Core
             return (st.Class == EnumItemClass.Block ? "b:" : "i:") + st.Collectible.Code;
         }
 
-        /// <summary>Sorts across the given sections (visible flow order). Returns moves made.</summary>
-        public static int Sort(ICoreClientAPI capi, IReadOnlyList<InventorySection> visible)
+        /// <summary>
+        /// Whether a stack belongs to one of the categories the player chose to keep on them.
+        /// Needs the slot (not just the stack) because the food freshness sub-filter reads the
+        /// perish transition state, which lives on the slot.
+        /// </summary>
+        private static bool IsPriority(IWorldAccessor world, ItemSlot slot, ItemStack st, ModConfig cfg)
         {
-            // Flow cells, in order, with their container index for the boundary rule.
+            var c = st?.Collectible;
+            if (c == null) return false;
+
+            if (cfg.SortPrioritizeTools && c.Tool != null) return true;
+
+            if (cfg.SortPrioritizeFood && c.NutritionProps != null)
+            {
+                if (cfg.SortFoodMaxSpoilDays <= 0) return true;
+                try
+                {
+                    var state = c.UpdateAndGetTransitionState(world, slot, EnumTransitionType.Perish);
+                    if (state != null && state.FreshHoursLeft <= cfg.SortFoodMaxSpoilDays * 24f) return true;
+                }
+                catch { /* not perishable / no state: falls through, not matched */ }
+            }
+
+            var part = c.Code?.FirstCodePart();
+            if (cfg.SortPrioritizeSeeds && part == "seeds") return true;
+            if (cfg.SortPrioritizeOre && (part == "ore" || part == "nugget" || part == "crystalizedore")) return true;
+
+            return false;
+        }
+
+        /// <summary>Sorts across the given sections (visible flow order). Returns moves made.</summary>
+        public static int Sort(ICoreClientAPI capi, IReadOnlyList<InventorySection> visible, ModConfig cfg)
+        {
+            // Flow cells, in order, with their container index for the boundary rule. The
+            // belt/hotbar is never a flow section, so it is inherently excluded - but skip it
+            // defensively in case that ever changes.
             var cells = new List<(InventorySection s, int slotId, int container)>();
             for (int ci = 0; ci < visible.Count; ci++)
             {
+                if (visible[ci].Kind == SectionKind.Hotbar) continue;
                 foreach (var id in visible[ci].SlotIds) cells.Add((visible[ci], id, ci));
             }
             if (cells.Count == 0) return 0;
@@ -58,17 +91,27 @@ namespace SymbioticInventories.Core
             }
 
             // ---- desired arrangement -------------------------------------------
-            var stacks = new List<ItemStack>();
+            // Each item carries whether it is a prioritised category, computed per slot so the
+            // food freshness sub-filter can read the perish state.
+            var items = new List<(ItemStack st, bool prio)>();
             for (int i = 0; i < cells.Count; i++)
             {
                 var slot = SlotAt(i);
-                if (slot != null && !slot.Empty) stacks.Add(slot.Itemstack);
+                if (slot != null && !slot.Empty)
+                    items.Add((slot.Itemstack, IsPriority(capi.World, slot, slot.Itemstack, cfg)));
             }
 
-            var groups = stacks
-                .GroupBy(CategoryOf)
-                .OrderBy(g => g.Key, StringComparer.Ordinal)
+            // Prioritised categories float to the front of the sequence. The flow lays the
+            // sequence out from the first cell, and the worn backpacks are the first cells, so
+            // front-of-sequence == into-the-backpacks. Grouping and per-category ordering are
+            // untouched; only the group ORDER changes. A category counts as prioritised if any
+            // of its stacks is (e.g. perishable bread present, dried grain not).
+            var groups = items
+                .GroupBy(x => CategoryOf(x.st))
+                .OrderBy(g => g.Any(x => x.prio) ? 0 : 1)
+                .ThenBy(g => g.Key, StringComparer.Ordinal)
                 .Select(g => g
+                    .Select(x => x.st)
                     .OrderBy(ItemKeyOf, StringComparer.Ordinal)
                     .ThenByDescending(st => st.StackSize)
                     .ToList())

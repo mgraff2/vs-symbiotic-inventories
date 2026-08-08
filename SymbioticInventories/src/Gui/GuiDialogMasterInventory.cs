@@ -65,6 +65,9 @@ namespace SymbioticInventories.Gui
         /// <summary>Opens the options dialog. Wired by the mod system.</summary>
         public Action OpenOptions;
 
+        /// <summary>Live config, for behaviours the window drives (sort options). Wired by the mod system.</summary>
+        public ModConfig Config;
+
         /// <summary>Grid bounds paired with their viewport-relative Y, for scrolling without recompose.</summary>
         private readonly List<(ElementBounds bounds, double relY)> scrollables = new();
 
@@ -646,7 +649,7 @@ namespace SymbioticInventories.Gui
         /// <summary>Sorts the visible containers' contents globally, then recomposes.</summary>
         private bool OnSort()
         {
-            int moves = InventorySorter.Sort(capi, flowSections);
+            int moves = InventorySorter.Sort(capi, flowSections, Config ?? new ModConfig());
             capi.Logger.Notification("[SymbioticInventories] Sort: {0} slot operations.", moves);
             Refresh();
             return true;

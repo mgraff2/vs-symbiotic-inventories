@@ -70,19 +70,31 @@ namespace SymbioticInventories
             api.Input.SetHotKeyHandler(GuiDialogMasterInventory.FocusHotkeyCode, _ => window.ToggleDockFocus());
             api.Gui.RegisterDialog(window);
 
-            // Also open on the vanilla inventory key (E). A global listener rather than
-            // overriding the "inventorydialog" handler, so the normal inventory/character
-            // screen (armour slots) is never suppressed - this is purely additive. Fires
-            // anywhere, which is the point: mounted on an elk you cannot look at the bags.
-            api.Input.AddHotkeyListener((code, comb) =>
+            // Take over the vanilla inventory key (E). A listener could only ADD our window
+            // on top of the vanilla one (both open, vanilla covering ours - the reported bug),
+            // because the hotkey delegate cannot suppress. Overriding the handler lets E open
+            // exactly one window: ours when the option is on, the real inventory otherwise
+            // (found in LoadedGuis, since replacing the handler removes the game's own open).
+            if (api.Input.GetHotKeyByCode("inventorydialog") != null)
             {
-                if (code != "inventorydialog" || !config.OpenOnInventoryKey) return;
-                if (!window.IsOpened())
+                api.Input.SetHotKeyHandler("inventorydialog", _ =>
                 {
-                    window.TryOpen();
-                    entityContainers.Discover();
-                }
-            });
+                    if (config.OpenOnInventoryKey)
+                    {
+                        window.Toggle();
+                        if (window.IsOpened()) entityContainers.Discover();
+                    }
+                    else
+                    {
+                        VanillaInventory()?.Toggle();
+                    }
+                    return true;
+                });
+            }
+            else
+            {
+                Mod.Logger.Warning("[SymbioticInventories] 'inventorydialog' hotkey not found - E will not open the window.");
+            }
 
             // Opening a chest has to bring the master window up, otherwise capturing it
             // would just make the container disappear with nowhere to show its contents.
@@ -98,6 +110,16 @@ namespace SymbioticInventories
             }, 500);
 
             Mod.Logger.Notification("[SymbioticInventories] Ready.");
+        }
+
+        /// <summary>The game's own inventory/character dialog, found by its toggle code.</summary>
+        private GuiDialog VanillaInventory()
+        {
+            foreach (var g in capi.Gui.LoadedGuis)
+            {
+                if (!ReferenceEquals(g, window) && g.ToggleKeyCombinationCode == "inventorydialog") return g;
+            }
+            return null;
         }
 
         private void OnCapturesChanged()

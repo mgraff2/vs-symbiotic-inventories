@@ -77,7 +77,11 @@ namespace SymbioticInventories.Integration
 
             foreach (var ent in candidates)
             {
-                if (!opened.Add(ent.EntityId)) continue;
+                // Already showing this entity's inventory (its dialog persists across a window
+                // close): do not re-run the open, which would toggle it shut. This is the fix
+                // for the mount inventory appearing only every other open.
+                if (capture.IsEntityCaptured(ent.EntityId)) continue;
+                if (!opened.Add(ent.EntityId)) continue;   // round-trip dedup within a session
                 OpenEntityContainers(ent);
             }
         }

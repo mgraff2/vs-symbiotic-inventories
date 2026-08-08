@@ -344,6 +344,21 @@ namespace SymbioticInventories.Integration
             return false;
         }
 
+        /// <summary>
+        /// Whether a container belonging to this entity is already captured. Entity dialogs
+        /// stay open (parked) when the master window closes, so on reopen the auto-discovery
+        /// must NOT re-run the open interaction - that would toggle the already-open dialog
+        /// shut, making the mount inventory appear only every other open.
+        /// </summary>
+        public bool IsEntityCaptured(long entityId)
+        {
+            foreach (var cap in captured.Values)
+            {
+                if (cap.OwningEntity != null && cap.OwningEntity.EntityId == entityId) return true;
+            }
+            return false;
+        }
+
         private void Release(GuiDialog dlg)
         {
             if (dlg == null || !captured.Remove(dlg)) return;

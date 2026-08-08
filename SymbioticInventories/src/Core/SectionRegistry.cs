@@ -200,19 +200,50 @@ namespace SymbioticInventories.Core
             return SectionKind.Mount;
         }
 
-        /// <summary>Block containers show their own block in the vessel row; entity ones have none.</summary>
+        /// <summary>
+        /// The vessel-row icon: a block container shows its own block; an entity container
+        /// (elk saddlebag, boat crate) shows the attached bag item whose contents this dialog
+        /// is displaying - so the tile pictures the actual saddlebag instead of a blank box.
+        /// </summary>
         private ItemStack CapturedIcon(CapturedDialog cap)
         {
-            if (cap.BlockPosition == null) return null;
-            var block = capi.World.BlockAccessor.GetBlock(cap.BlockPosition);
-            return block == null || block.Id == 0 ? null : new ItemStack(block);
+            if (cap.BlockPosition != null)
+            {
+                var block = capi.World.BlockAccessor.GetBlock(cap.BlockPosition);
+                return block == null || block.Id == 0 ? null : new ItemStack(block);
+            }
+            return AttachedBagStack(cap);
+        }
+
+        /// <summary>
+        /// Finds the held-bag item on the owning entity that this dialog is showing. Prefers
+        /// the bag whose slot count matches the open inventory (disambiguates a saddlebag from
+        /// a pannier); falls back to the first container bag on the animal.
+        /// </summary>
+        private ItemStack AttachedBagStack(CapturedDialog cap)
+        {
+            var inv = cap.OwningEntity?.GetBehavior<EntityBehaviorAttachable>()?.Inventory;
+            if (inv == null) return null;
+
+            ItemStack first = null;
+            foreach (var slot in inv)
+            {
+                if (slot == null || slot.Empty) continue;
+                var bag = slot.Itemstack.Collectible?.GetCollectibleInterface<IHeldBag>();
+                if (bag == null) continue;
+                first ??= slot.Itemstack;
+                if (bag.GetQuantitySlots(slot.Itemstack) == cap.Inventory.Count) return slot.Itemstack;
+            }
+            return first;
         }
 
         /// <summary>Container-type key: block code's first path part, so all chests group
-        /// together, all vessels together, regardless of variant/material.</summary>
+        /// together, all vessels together, regardless of variant/material. Entity containers
+        /// group by the bag item so all saddlebags sit together.</summary>
         private string CapturedGroupKey(CapturedDialog cap)
         {
-            if (cap.BlockPosition == null) return "entity";
+            if (cap.BlockPosition == null)
+                return AttachedBagStack(cap)?.Collectible?.Code?.FirstCodePart() ?? "entity";
             var block = capi.World.BlockAccessor.GetBlock(cap.BlockPosition);
             return block?.Code?.FirstCodePart() ?? "container";
         }

@@ -50,7 +50,17 @@ namespace SymbioticInventories.Integration
         private const int MaxChainOpen = 16;
 
         /// <summary>Ceiling on containers opened by one cellar sweep (cellars can be large).</summary>
-        private const int MaxCellarOpen = 32;
+        private const int MaxCellarOpen = 64;
+
+        /// <summary>
+        /// Cellar containers that were out of pick range when the sweep ran, opened one by one
+        /// as the player walks within reach. Value = open attempts made; range rejection is
+        /// silent (the server just ignores the click), so a capture is the only success signal
+        /// and a few failed attempts mean "locked or otherwise unopenable - stop clicking it".
+        /// </summary>
+        private readonly Dictionary<BlockPos, int> pendingOpens = new();
+
+        private const int MaxOpenAttempts = 3;
 
         private RoomRegistry roomRegistry;
 
@@ -308,15 +318,70 @@ namespace SymbioticInventories.Integration
             return found;
         }
 
-        /// <summary>Opens every not-yet-open standard container in the current cellar.</summary>
+        /// <summary>
+        /// Opens every not-yet-open standard container in the current cellar. The server
+        /// enforces pick range on each synthesized click exactly as on a real one, so a big
+        /// cellar cannot be opened from one spot - far vessels would be silently rejected.
+        /// What is in reach opens now; the rest queue and open as the player walks near them
+        /// (<see cref="TickPendingOpens"/>).
+        /// </summary>
         public void OpenCellarContainers()
         {
             var toOpen = FindCellarContainers();
             if (toOpen == null || toOpen.Count == 0) return;
             if (toOpen.Count > MaxCellarOpen) toOpen.RemoveRange(MaxCellarOpen, toOpen.Count - MaxCellarOpen);
-            foreach (var p in toOpen) SynthOpenBlock(p);
-            logger.Notification("[SymbioticInventories] Cellar: opened {0} container(s).", toOpen.Count);
+
+            int now = 0;
+            foreach (var p in toOpen)
+            {
+                if (WithinReach(p)) { SynthOpenBlock(p); now++; }
+                else pendingOpens[p.Copy()] = 0;
+            }
+            logger.Notification(
+                "[SymbioticInventories] Cellar: opened {0} container(s) in reach, {1} queued to open as you walk near them.",
+                now, pendingOpens.Count);
         }
+
+        /// <summary>Conservatively inside the server's own reach check.</summary>
+        private bool WithinReach(BlockPos p)
+        {
+            var plr = capi.World.Player;
+            double reach = plr.WorldData.PickingRange - 0.3;
+            double dx = plr.Entity.Pos.X - (p.X + 0.5);
+            double dy = plr.Entity.Pos.Y - (p.Y + 0.5);
+            double dz = plr.Entity.Pos.Z - (p.Z + 0.5);
+            return dx * dx + dy * dy + dz * dz <= reach * reach;
+        }
+
+        /// <summary>
+        /// Opens queued cellar containers as the player comes within pick range of each.
+        /// Runs on the window tick. A position leaves the queue when its dialog is captured,
+        /// or after <see cref="MaxOpenAttempts"/> fruitless clicks (locked, claimed, or
+        /// otherwise refusing to open - stop worrying it).
+        /// </summary>
+        public void TickPendingOpens()
+        {
+            if (pendingOpens.Count == 0) return;
+
+            List<BlockPos> drop = null;
+            List<BlockPos> attempt = null;
+            foreach (var (p, tries) in pendingOpens)
+            {
+                if (IsCapturedAt(p) || tries >= MaxOpenAttempts) { (drop ??= new()).Add(p); continue; }
+                if (WithinReach(p)) (attempt ??= new()).Add(p);
+            }
+
+            if (drop != null) foreach (var p in drop) pendingOpens.Remove(p);
+            if (attempt == null) return;
+            foreach (var p in attempt)
+            {
+                pendingOpens[p]++;
+                SynthOpenBlock(p);
+            }
+        }
+
+        /// <summary>Forget queued cellar opens (call when the window closes).</summary>
+        public void ClearPendingOpens() => pendingOpens.Clear();
 
         /// <summary>
         /// A container the master window can actually adopt: a block-entity container whose
@@ -422,6 +487,19 @@ namespace SymbioticInventories.Integration
                 var inv = invField.GetValue(dlg) as IInventory;
                 if (inv == null) return null;
                 var ent = AccessTools.Field(type, "owningEntity")?.GetValue(dlg) as Entity;
+
+                // Carcass harvesting opens this same dialog class, but it is a one-shot loot
+                // window mid-knife-animation, not a container: absorbing it hides the loot
+                // behind the master window. The harvest behavior owns the inventory it shows,
+                // so identity against that field is an exact test - a dead pack animal still
+                // gets its saddlebags captured (different inventory) while its carcass window
+                // passes through.
+                if (ent?.GetBehavior("harvestable") is { } bh
+                    && ReferenceEquals(AccessTools.Field(bh.GetType(), "inv")?.GetValue(bh), inv))
+                {
+                    return null;
+                }
+
                 var title = AccessTools.Field(type, "title")?.GetValue(dlg) as string;
                 return new CapturedDialog
                 {

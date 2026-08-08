@@ -40,7 +40,7 @@ namespace SymbioticInventories
             entityContainers = new EntityContainerService();
             entityContainers.Start(api, config, capture, Mod.Logger);
 
-            var registry = new SectionRegistry(api, capture, config);
+            var registry = new SectionRegistry(api, capture);
             window = new GuiDialogMasterInventory(api, registry) { Config = config, Capture = capture };
             options = new GuiDialogOptions(api, config, () => api.StoreModConfig(config, ModConfig.Filename)) { MainWindow = window };
             window.OpenOptions = () => options.TryOpen();

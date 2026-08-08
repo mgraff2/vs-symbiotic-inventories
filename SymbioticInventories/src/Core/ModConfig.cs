@@ -57,12 +57,6 @@ namespace SymbioticInventories.Core
         public bool OpenOnInventoryKey { get; set; } = true;
 
         /// <summary>
-        /// Show the character (armour/clothing) slots in the window, so it fully replaces the
-        /// vanilla inventory screen. Off if you would rather keep armour on the vanilla screen.
-        /// </summary>
-        public bool ShowCharacterSlots { get; set; } = true;
-
-        /// <summary>
         /// Show the inventory of the mount the player is riding (elk saddlebags, etc.) in the
         /// master window automatically, without opening it by hand.
         /// </summary>

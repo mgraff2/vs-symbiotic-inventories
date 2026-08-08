@@ -128,22 +128,30 @@ namespace SymbioticInventories.Gui
             Compose();
         }
 
-        /// <summary>Vessel tiles are toggles: click to hide a container's ribbon, click to bring it back.</summary>
+        /// <summary>
+        /// Vessel tiles are toggles: click to hide a container's ribbon, click to bring it
+        /// back. The hit-test MUST run before base.OnMouseDown - the base dialog marks every
+        /// click inside the window as handled (verified in its IL: any composer bounds
+        /// containing the point => Handled) to stop click-through to the world, so testing
+        /// afterwards sees Handled=true and never fires. Real bug: tiles ignored all clicks.
+        /// </summary>
         public override void OnMouseDown(MouseEvent args)
         {
-            base.OnMouseDown(args);
-            if (args.Handled || !IsOpened()) return;
-
-            foreach (var (_, _, bounds, s) in iconTiles)
+            if (IsOpened() && !args.Handled)
             {
-                if (!bounds.PointInside(args.X, args.Y)) continue;
+                foreach (var (_, _, bounds, s) in iconTiles)
+                {
+                    if (!bounds.PointInside(args.X, args.Y)) continue;
 
-                if (!hiddenIds.Remove(s.Id)) hiddenIds.Add(s.Id);
-                scrollY = 0;
-                Compose();
-                args.Handled = true;
-                return;
+                    if (!hiddenIds.Remove(s.Id)) hiddenIds.Add(s.Id);
+                    scrollY = 0;
+                    Compose();
+                    args.Handled = true;
+                    return;
+                }
             }
+
+            base.OnMouseDown(args);
         }
 
         // ---- composition --------------------------------------------------------

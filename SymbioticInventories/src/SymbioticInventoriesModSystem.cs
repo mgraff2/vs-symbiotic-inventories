@@ -70,31 +70,16 @@ namespace SymbioticInventories
             api.Input.SetHotKeyHandler(GuiDialogMasterInventory.FocusHotkeyCode, _ => window.ToggleDockFocus());
             api.Gui.RegisterDialog(window);
 
-            // Take over the vanilla inventory key (E). A listener could only ADD our window
-            // on top of the vanilla one (both open, vanilla covering ours - the reported bug),
-            // because the hotkey delegate cannot suppress. Overriding the handler lets E open
-            // exactly one window: ours when the option is on, the real inventory otherwise
-            // (found in LoadedGuis, since replacing the handler removes the game's own open).
-            if (api.Input.GetHotKeyByCode("inventorydialog") != null)
-            {
-                api.Input.SetHotKeyHandler("inventorydialog", _ =>
-                {
-                    if (config.OpenOnInventoryKey)
-                    {
-                        window.Toggle();
-                        if (window.IsOpened()) entityContainers.Discover();
-                    }
-                    else
-                    {
-                        VanillaInventory()?.Toggle();
-                    }
-                    return true;
-                });
-            }
-            else
-            {
-                Mod.Logger.Warning("[SymbioticInventories] 'inventorydialog' hotkey not found - E will not open the window.");
-            }
+            // Take over the vanilla inventory key (E) via a Harmony prefix on the dialog
+            // toggle. SetHotKeyHandler loses a startup race - each dialog re-registers its own
+            // toggle in OnBlockTexturesLoaded, after mod load, so the vanilla inventory
+            // reclaimed E and both windows opened. The prefix is order-independent.
+            InventoryKeyInterceptor.Config = config;
+            InventoryKeyInterceptor.Window = window;
+            InventoryKeyInterceptor.Entities = entityContainers;
+            harmony.Patch(
+                AccessTools.Method(typeof(GuiDialog), "OnKeyCombinationToggle"),
+                prefix: new HarmonyMethod(AccessTools.Method(typeof(InventoryKeyInterceptor), nameof(InventoryKeyInterceptor.Prefix))));
 
             // Opening a chest has to bring the master window up, otherwise capturing it
             // would just make the container disappear with nowhere to show its contents.
@@ -110,16 +95,6 @@ namespace SymbioticInventories
             }, 500);
 
             Mod.Logger.Notification("[SymbioticInventories] Ready.");
-        }
-
-        /// <summary>The game's own inventory/character dialog, found by its toggle code.</summary>
-        private GuiDialog VanillaInventory()
-        {
-            foreach (var g in capi.Gui.LoadedGuis)
-            {
-                if (!ReferenceEquals(g, window) && g.ToggleKeyCombinationCode == "inventorydialog") return g;
-            }
-            return null;
         }
 
         private void OnCapturesChanged()

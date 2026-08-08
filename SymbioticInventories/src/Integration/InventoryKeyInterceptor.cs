@@ -1,0 +1,35 @@
+using SymbioticInventories.Core;
+using SymbioticInventories.Gui;
+using Vintagestory.API.Client;
+
+namespace SymbioticInventories.Integration
+{
+    /// <summary>
+    /// Redirects the vanilla inventory key (E) to the master window.
+    ///
+    /// SetHotKeyHandler could not win: every GuiDialog re-registers its own toggle handler in
+    /// OnBlockTexturesLoaded, which runs AFTER mod startup, so the vanilla inventory dialog
+    /// overwrote ours (E opened both). Instead this prefixes the toggle itself. When the dialog
+    /// being toggled is the vanilla inventory and the option is on, it opens our window and
+    /// returns false to skip the vanilla open - order-independent, and the exact code path the
+    /// game runs for the key, so there is no double window.
+    /// </summary>
+    public static class InventoryKeyInterceptor
+    {
+        public static ModConfig Config;
+        public static GuiDialogMasterInventory Window;
+        public static EntityContainerService Entities;
+
+        public static bool Prefix(GuiDialog __instance, ref bool __result)
+        {
+            if (Config == null || Window == null) return true;              // not wired yet
+            if (!Config.OpenOnInventoryKey) return true;                    // option off: vanilla as normal
+            if (__instance.ToggleKeyCombinationCode != "inventorydialog") return true;  // some other dialog
+
+            Window.Toggle();
+            if (Window.IsOpened()) Entities?.Discover();
+            __result = true;   // the key was consumed
+            return false;      // skip the vanilla inventory toggle
+        }
+    }
+}

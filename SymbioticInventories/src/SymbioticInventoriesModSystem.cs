@@ -86,12 +86,21 @@ namespace SymbioticInventories
             capture.OnCapturesChanged += OnCapturesChanged;
 
             // While the window is up, keep discovering mount/boat containers - the player may
-            // mount an elk or walk up to a boat after opening it. 500 ms is imperceptible and
-            // the service skips entities it has already opened.
+            // mount an elk or walk up to a boat after opening it - and drain the cellar
+            // walk-by queue (containers past pick range open as the player nears them).
+            // 500 ms is imperceptible and both services skip what is already open.
             api.Event.RegisterGameTickListener(_ =>
             {
-                if (window.IsOpened()) entityContainers.Discover();
-                else entityContainers.Reset();
+                if (window.IsOpened())
+                {
+                    entityContainers.Discover();
+                    capture.TickPendingOpens();
+                }
+                else
+                {
+                    entityContainers.Reset();
+                    capture.ClearPendingOpens();
+                }
             }, 500);
 
             Mod.Logger.Notification("[SymbioticInventories] Ready.");

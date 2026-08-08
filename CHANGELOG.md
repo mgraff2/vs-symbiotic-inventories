@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Fixed** carcass harvesting: carving a dead animal no longer gets swallowed by the master
+  window - the harvest loot dialog passes through untouched, so you can collect the drops.
+- **Open cellar now reaches the whole cellar.** The server enforces pick range on every open,
+  so a big cellar cannot open from one spot; containers past reach now queue and open
+  automatically as you walk near them. Sweep ceiling raised 32 → 64.
 - **Removed auto-sorting** and all its options (category priorities, spoilage filter, freshness
   ordering). The mod surfaces information — which slot lives in which container — but arranging
   your goods is your work, not the mod's. This also removes the one feature that rewrote real

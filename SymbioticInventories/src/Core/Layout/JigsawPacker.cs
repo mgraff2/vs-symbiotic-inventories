@@ -36,8 +36,14 @@ namespace SymbioticInventories.Core.Layout
 
             foreach (var box in boxes)
             {
-                double bestScore = double.MaxValue;
+                // Best placement by lexicographic priority: lowest resulting top edge, then
+                // least buried air, then leftmost. Waste matters because a rectangle resting
+                // across an uneven skyline permanently entombs every notch beneath it - the
+                // pre-waste packer left visible holes under short sections that a same-height
+                // placement one notch over would have filled.
+                (double top, double waste, double x) bestKey = (double.MaxValue, 0, 0);
                 (int cols, int rows, double x, double y) best = default;
+                bool found = false;
 
                 foreach (var (cols, rows) in CandidateShapes(box.Section, maxWidth, maxCols))
                 {
@@ -47,20 +53,22 @@ namespace SymbioticInventories.Core.Layout
 
                     for (int i = 0; i < skyline.Count; i++)
                     {
-                        if (!TryFit(skyline, i, w, out double x, out double y)) continue;
+                        if (!TryFit(skyline, i, w, out double x, out double y, out double waste)) continue;
 
-                        // Primary: keep the skyline low. Secondary: hug the left edge, so
-                        // equal-height options fill left-to-right instead of scattering.
-                        double score = (y + h) * 1000 + x;
-                        if (score < bestScore)
+                        var key = (top: y + h, waste, x);
+                        if (!found
+                            || key.top < bestKey.top - 0.001
+                            || (Math.Abs(key.top - bestKey.top) <= 0.001 && key.waste < bestKey.waste - 0.001)
+                            || (Math.Abs(key.top - bestKey.top) <= 0.001 && Math.Abs(key.waste - bestKey.waste) <= 0.001 && key.x < bestKey.x))
                         {
-                            bestScore = score;
+                            found = true;
+                            bestKey = key;
                             best = (cols, rows, x, y);
                         }
                     }
                 }
 
-                if (bestScore == double.MaxValue)
+                if (!found)
                 {
                     // Nothing fits nowhere only if the strip is narrower than one cell;
                     // place at the top of the skyline rather than losing the section.
@@ -124,13 +132,14 @@ namespace SymbioticInventories.Core.Layout
 
         /// <summary>
         /// Can a rectangle of width w sit with its left edge at segment i? Its resting height
-        /// is the max skyline height across its span; the wasted area under it is implicit in
-        /// the height score, which is what keeps the packer honest without a separate term.
+        /// is the max skyline height across its span, and <paramref name="waste"/> is the
+        /// buried air under it - skyline notches this placement would seal off forever.
         /// </summary>
-        private static bool TryFit(List<Segment> skyline, int i, double w, out double x, out double y)
+        private static bool TryFit(List<Segment> skyline, int i, double w, out double x, out double y, out double waste)
         {
             x = skyline[i].X;
             y = skyline[i].Y;
+            waste = 0;
 
             double remaining = w;
             for (int j = i; j < skyline.Count && remaining > 0.001; j++)
@@ -138,7 +147,17 @@ namespace SymbioticInventories.Core.Layout
                 y = Math.Max(y, skyline[j].Y);
                 remaining -= skyline[j].W;
             }
-            return remaining <= 0.001;
+            if (remaining > 0.001) return false;
+
+            // Second pass now that the resting height is known.
+            remaining = w;
+            for (int j = i; j < skyline.Count && remaining > 0.001; j++)
+            {
+                double covered = Math.Min(remaining, skyline[j].W);
+                waste += (y - skyline[j].Y) * covered;
+                remaining -= covered;
+            }
+            return true;
         }
 
         /// <summary>Flattens the skyline across [x, x+w) to the new height.</summary>

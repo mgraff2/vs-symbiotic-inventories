@@ -102,6 +102,24 @@ $scenarios = @{
         (New-Section 'Aft crate'   'Vehicle'        16  5 0),
         (New-Section 'Saddlebag'   'Mount'          12  6 0)
     )
+    # The real 2026-08-08 screenshot case: chain-open on a trunk wall - 4 backpacks plus
+    # seven 36-slot trunks and a vessel, twelve sections at once.
+    'warehouse' = @(
+        (New-Section 'Crafting'   'Crafting'        9  0 3),
+        (New-Section 'Worn bags'  'BackpackSlots'   4  0 4),
+        (New-Section 'Bag 1'      'Backpack'        8  1 0),
+        (New-Section 'Bag 2'      'Backpack'        8  2 0),
+        (New-Section 'Bag 3'      'Backpack'        8  3 0),
+        (New-Section 'Bag 4'      'Backpack'        8  4 0),
+        (New-Section 'Trunk 1'    'GroundContainer' 36 5 0),
+        (New-Section 'Trunk 2'    'GroundContainer' 36 6 0),
+        (New-Section 'Vessel'     'GroundContainer' 12 7 0),
+        (New-Section 'Trunk 3'    'GroundContainer' 36 8 0),
+        (New-Section 'Trunk 4'    'GroundContainer' 36 9 0),
+        (New-Section 'Trunk 5'    'GroundContainer' 36 10 0),
+        (New-Section 'Trunk 6'    'GroundContainer' 36 11 0),
+        (New-Section 'Trunk 7'    'GroundContainer' 36 12 0)
+    )
     'heavy' = @(
         (New-Section 'Crafting'   'Crafting'        9  0 3),
         (New-Section 'Worn bags'  'BackpackSlots'   4  0 4),
@@ -206,7 +224,7 @@ function Show-Map($plan, $budget) {
     }
 }
 
-foreach ($scenarioName in @('minimal', 'typical', 'boat', 'heavy')) {
+foreach ($scenarioName in @('minimal', 'typical', 'boat', 'warehouse', 'heavy')) {
     foreach ($modeName in @('Auto', 'DockLeft')) {
         $list = New-SectionList $scenarios[$scenarioName]
 

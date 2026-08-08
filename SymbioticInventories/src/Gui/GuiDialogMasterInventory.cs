@@ -341,14 +341,17 @@ namespace SymbioticInventories.Gui
             double screenAvail = budget.MaxWidth;
             LayoutPlan widest = null;
 
-            foreach (int capCols in new[] { 18, 22, 26 })
+            // Step outward from the readable default all the way to the physical screen -
+            // not to a hardcoded ceiling. A 1440p monitor has past 30 columns available, and
+            // stopping at 26 left a 12-section load scrolling beside unused screen.
+            for (int capCols = 18; ; capCols += 4)
             {
                 budget.MaxWidth = Math.Min(capCols * LayoutMetrics.Cell, screenAvail);
                 var candidate = SectionPacker.Pack(sections, budget);
                 if (!candidate.Overflows) return candidate;
                 widest = candidate;
 
-                // The screen is narrower than this cap anyway - wider caps change nothing.
+                // The screen itself is the last cap worth trying.
                 if (budget.MaxWidth >= screenAvail - 0.001) break;
             }
 

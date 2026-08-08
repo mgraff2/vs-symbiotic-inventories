@@ -83,14 +83,12 @@ $scenarios = @{
         (New-Section 'Worn bags'  'BackpackSlots'   4  0 4),
         (New-Section 'Hunter bag' 'Backpack'       16  1 0),
         (New-Section 'Leather bag' 'Backpack'      16  2 0),
-        (New-Section 'Chest'      'GroundContainer' 16 3 0),
-        (New-Section 'Hotbar'     'Hotbar'         10  0 10)
+        (New-Section 'Chest'      'GroundContainer' 16 3 0)
     )
     # Fresh spawn: no bags at all. Guards the degenerate case where the essentials band is
     # nearly the whole window and there is almost nothing to scroll.
     'minimal' = @(
-        (New-Section 'Crafting'   'Crafting'  9  0 3),
-        (New-Section 'Hotbar'     'Hotbar'   10  0 10)
+        (New-Section 'Crafting'   'Crafting'  9  0 3)
     )
     # Aboard a Shipwright boat: the case the mod was originally asked for. Several vehicle
     # crates open at once on top of a normally-equipped player.
@@ -102,8 +100,7 @@ $scenarios = @{
         (New-Section 'Fore crate'  'Vehicle'        32  3 0),
         (New-Section 'Mid crate'   'Vehicle'        32  4 0),
         (New-Section 'Aft crate'   'Vehicle'        16  5 0),
-        (New-Section 'Saddlebag'   'Mount'          12  6 0),
-        (New-Section 'Hotbar'      'Hotbar'         10  0 10)
+        (New-Section 'Saddlebag'   'Mount'          12  6 0)
     )
     'heavy' = @(
         (New-Section 'Crafting'   'Crafting'        9  0 3),
@@ -115,8 +112,7 @@ $scenarios = @{
         (New-Section 'Chest'      'GroundContainer' 32 5 0),
         (New-Section 'Vessel'     'GroundContainer' 16 6 0),
         (New-Section 'Basket'     'GroundContainer' 8  7 0),
-        (New-Section 'Boat crate' 'Vehicle'        32  8 0),
-        (New-Section 'Hotbar'     'Hotbar'         10  0 10)
+        (New-Section 'Boat crate' 'Vehicle'        32  8 0)
     )
 }
 

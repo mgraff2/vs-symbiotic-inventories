@@ -21,5 +21,5 @@
   "btn-options": "Options",
   "options-title": "Symbiotic Inventories - Options",
   "opt-adjacent": "Open adjacent chests together",
-  "opt-adjacent-hint": "One right-click on a chest also opens every touching chest of the same kind, docking the whole wall into the window at once. Locked or claimed chests stay shut."
+  "opt-adjacent-hint": "One right-click on a chest also opens every chest of the same kind within a few blocks, docking the whole wall into the window at once. Locked or claimed chests stay shut."
 }

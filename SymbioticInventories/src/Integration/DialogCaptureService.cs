@@ -46,7 +46,7 @@ namespace SymbioticInventories.Integration
         private readonly HashSet<BlockPos> autoOpened = new();
 
         /// <summary>Ceiling on how many neighbours one click may open.</summary>
-        private const int MaxChainOpen = 8;
+        private const int MaxChainOpen = 16;
 
         /// <summary>Raised whenever the set of captured dialogs changes, so the window can recompose.</summary>
         public event Action OnCapturesChanged;
@@ -196,28 +196,36 @@ namespace SymbioticInventories.Integration
             if (originBe == null) return;
             var kind = originBe.GetType();
 
-            // Contiguous same-kind cluster around the clicked chest, breadth-first.
+            // Every same-kind container within the radius box. A face-contiguity flood fill
+            // was tried first and failed on a real chest wall: shelf boards between the rows
+            // broke the chain, so only the directly touching third of the wall opened.
+            int radius = Math.Clamp(config.AdjacentOpenRadius, 1, 6);
             var toOpen = new List<BlockPos>();
-            var visited = new HashSet<BlockPos> { origin.Copy() };
-            var queue = new Queue<BlockPos>();
-            queue.Enqueue(origin);
 
-            while (queue.Count > 0 && toOpen.Count < MaxChainOpen)
+            for (int dx = -radius; dx <= radius; dx++)
             {
-                var p = queue.Dequeue();
-                foreach (var face in BlockFacing.ALLFACES)
+                for (int dy = -radius; dy <= radius; dy++)
                 {
-                    var np = p.AddCopy(face);
-                    if (!visited.Add(np)) continue;
+                    for (int dz = -radius; dz <= radius; dz++)
+                    {
+                        if (dx == 0 && dy == 0 && dz == 0) continue;
 
-                    var nbe = capi.World.BlockAccessor.GetBlockEntity(np);
-                    if (nbe == null || nbe.GetType() != kind) continue;
-                    if (IsCapturedAt(np)) continue;
+                        var np = origin.AddCopy(dx, dy, dz);
+                        var nbe = capi.World.BlockAccessor.GetBlockEntity(np);
+                        if (nbe == null || nbe.GetType() != kind) continue;
+                        if (IsCapturedAt(np)) continue;
 
-                    toOpen.Add(np);
-                    queue.Enqueue(np);
+                        toOpen.Add(np);
+                    }
                 }
             }
+
+            // Nearest first, so section numbers count outward from the chest that was
+            // clicked, and the cap trims the far edge rather than an arbitrary corner.
+            toOpen.Sort((a, b) =>
+                (Math.Abs(a.X - origin.X) + Math.Abs(a.Y - origin.Y) + Math.Abs(a.Z - origin.Z))
+                .CompareTo(Math.Abs(b.X - origin.X) + Math.Abs(b.Y - origin.Y) + Math.Abs(b.Z - origin.Z)));
+            if (toOpen.Count > MaxChainOpen) toOpen.RemoveRange(MaxChainOpen, toOpen.Count - MaxChainOpen);
 
             foreach (var p in toOpen)
             {

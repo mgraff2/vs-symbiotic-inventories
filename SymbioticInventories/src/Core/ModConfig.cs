@@ -12,9 +12,17 @@ namespace SymbioticInventories.Core
         public const string Filename = "symbioticinventories.json";
 
         /// <summary>
-        /// One right-click on a chest also opens every touching chest of the same kind, so
-        /// the whole wall docks into the master window at once.
+        /// One right-click on a chest also opens every chest of the same kind within
+        /// <see cref="AdjacentOpenRadius"/> blocks, so the whole wall docks into the master
+        /// window at once.
         /// </summary>
         public bool OpenAdjacentChests { get; set; } = true;
+
+        /// <summary>
+        /// How far (in blocks, box radius) around the clicked container to look. Radius
+        /// rather than face-contiguity on purpose: real chest walls have shelf boards and
+        /// air gaps between rows that a flood fill cannot cross.
+        /// </summary>
+        public int AdjacentOpenRadius { get; set; } = 3;
     }
 }

@@ -193,14 +193,9 @@ namespace SymbioticInventories.Gui
             }
             else
             {
-                // Cap the floating window at 18 slot-columns even on a wide monitor. Given
-                // unlimited width the packer's height-first score lays every section out in
-                // one enormous single row - technically optimal, unreadable in practice (seen
-                // in the first real screenshot). ~18 columns keeps the window inventory-shaped
-                // and forces storage to wrap into a block.
-                budget.MaxWidth = Math.Min(
-                    18 * LayoutMetrics.Cell,
-                    Math.Max(4 * LayoutMetrics.Cell, screenW * 0.82 - RailW - Pad * 3));
+                // Full screen availability; Compose narrows this via width caps. The cap
+                // logic lives there because "how wide" depends on what is open right now.
+                budget.MaxWidth = Math.Max(4 * LayoutMetrics.Cell, screenW * 0.82 - RailW - Pad * 3);
                 budget.MaxHeight = screenH * 0.86 - chromeH;
             }
 
@@ -215,7 +210,7 @@ namespace SymbioticInventories.Gui
         {
             sections = registry.Build();
             var budget = BuildBudget();
-            plan = SectionPacker.Pack(sections, budget);
+            plan = PackBestWidth(budget);
 
             scrollables.Clear();
 
@@ -330,6 +325,34 @@ namespace SymbioticInventories.Gui
             }
 
             WatchInventories();
+        }
+
+        /// <summary>
+        /// Widen before scrolling. An 18-column window is the readable default, but a wall of
+        /// chain-opened trunks at 18 columns means a scrollbar while the top-right of the
+        /// screen sits empty (seen in a real screenshot). Try the readable width first and
+        /// take the narrowest cap whose layout needs no scrolling; if even the widest cap
+        /// overflows, take that one - it scrolls the least.
+        /// </summary>
+        private LayoutPlan PackBestWidth(LayoutBudget budget)
+        {
+            if (mode != LayoutMode.Auto) return SectionPacker.Pack(sections, budget);
+
+            double screenAvail = budget.MaxWidth;
+            LayoutPlan widest = null;
+
+            foreach (int capCols in new[] { 18, 22, 26 })
+            {
+                budget.MaxWidth = Math.Min(capCols * LayoutMetrics.Cell, screenAvail);
+                var candidate = SectionPacker.Pack(sections, budget);
+                if (!candidate.Overflows) return candidate;
+                widest = candidate;
+
+                // The screen is narrower than this cap anyway - wider caps change nothing.
+                if (budget.MaxWidth >= screenAvail - 0.001) break;
+            }
+
+            return widest;
         }
 
         /// <summary>

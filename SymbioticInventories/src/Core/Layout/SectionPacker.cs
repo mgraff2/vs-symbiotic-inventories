@@ -281,8 +281,9 @@ namespace SymbioticInventories.Core.Layout
 
         /// <summary>
         /// Groups sections into the three horizontal bands the window is read in: what you
-        /// are carrying, what you have opened, and the hotbar. Fixed order - the whole point
-        /// is that a given bag is always in the same place.
+        /// are carrying, and what you have opened. Fixed order - the whole point is that a
+        /// given bag is always in the same place. No hotbar band: the vanilla hotbar HUD is
+        /// permanently on screen, so a copy here would only repeat it.
         /// </summary>
         private static List<LayoutBand> GroupIntoBands(IReadOnlyList<InventorySection> sections)
         {
@@ -297,24 +298,18 @@ namespace SymbioticInventories.Core.Layout
             // Stability comes free; separate bands would only waste the interlock.
             var storage = new LayoutBand { Key = "storage", Title = "Storage" };
 
-            // The hotbar scrolls with everything else: the vanilla hotbar HUD is on screen
-            // permanently anyway, so pinning a second copy would spend fixed height on the one
-            // inventory the player can already always see.
-            var hotbar = new LayoutBand { Key = "hotbar", Title = "Hotbar" };
-
             foreach (var s in sections)
             {
                 var target = s.Kind switch
                 {
                     SectionKind.Crafting => essentials,
                     SectionKind.BackpackSlots => essentials,
-                    SectionKind.Hotbar => hotbar,
                     _ => storage
                 };
                 target.Boxes.Add(new LayoutBox { Section = s });
             }
 
-            return new List<LayoutBand> { essentials, storage, hotbar };
+            return new List<LayoutBand> { essentials, storage };
         }
     }
 }

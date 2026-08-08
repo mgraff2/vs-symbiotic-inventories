@@ -37,7 +37,9 @@ namespace SymbioticInventories.Core
             AddBagSlots(sections, im);
             AddBackpacks(sections, im, ref badge);
             AddCaptured(sections, ref badge);
-            AddHotbar(sections, im);
+            // Deliberately no hotbar section: the vanilla hotbar HUD is permanently on
+            // screen anyway, so a copy in the window would only spend rows repeating the one
+            // inventory the player can already always see.
 
             return sections;
         }
@@ -148,24 +150,6 @@ namespace SymbioticInventories.Core
                 }
             }
             return Lang.Get("symbioticinventories:section-backpack-n", bagIndex + 1);
-        }
-
-        private void AddHotbar(List<InventorySection> sections, IPlayerInventoryManager im)
-        {
-            var inv = im.GetHotbarInventory();
-            if (inv == null) return;
-
-            sections.Add(new InventorySection
-            {
-                Id = "hotbar",
-                Label = Lang.Get("symbioticinventories:section-hotbar"),
-                Kind = SectionKind.Hotbar,
-                Accent = SectionPalette.Neutral,
-                Inventory = inv,
-                SlotIds = Enumerable.Range(0, inv.Count).ToArray(),
-                FixedColumns = Math.Max(inv.Count, 1),   // one row, because the number keys are
-                SendPacket = SendPlayerPacket
-            });
         }
 
         // ---- captured containers -------------------------------------------------

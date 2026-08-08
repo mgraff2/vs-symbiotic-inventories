@@ -129,6 +129,7 @@ namespace SymbioticInventories.Core
                     Inventory = inv,
                     SlotIds = byBag[bagIndex].ToArray(),
                     Icon = BagStack(inv, bagIndex),
+                    GroupKey = "backpack",
                     SendPacket = SendPlayerPacket
                 });
             }
@@ -175,6 +176,7 @@ namespace SymbioticInventories.Core
                     Inventory = cap.Inventory,
                     SlotIds = Enumerable.Range(0, cap.Inventory.Count).ToArray(),
                     Icon = CapturedIcon(cap),
+                    GroupKey = CapturedGroupKey(cap),
                     SendPacket = cap.SendPacket
                 });
             }
@@ -204,6 +206,15 @@ namespace SymbioticInventories.Core
             if (cap.BlockPosition == null) return null;
             var block = capi.World.BlockAccessor.GetBlock(cap.BlockPosition);
             return block == null || block.Id == 0 ? null : new ItemStack(block);
+        }
+
+        /// <summary>Container-type key: block code's first path part, so all chests group
+        /// together, all vessels together, regardless of variant/material.</summary>
+        private string CapturedGroupKey(CapturedDialog cap)
+        {
+            if (cap.BlockPosition == null) return "entity";
+            var block = capi.World.BlockAccessor.GetBlock(cap.BlockPosition);
+            return block?.Code?.FirstCodePart() ?? "container";
         }
 
         private string DescribeWhere(CapturedDialog cap)

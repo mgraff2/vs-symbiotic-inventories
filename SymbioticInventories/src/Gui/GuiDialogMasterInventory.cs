@@ -80,6 +80,12 @@ namespace SymbioticInventories.Gui
         /// pass, live bounds for click hit-testing.</summary>
         private readonly List<(double x, double y, ElementBounds bounds, InventorySection s)> iconTiles = new();
 
+        /// <summary>Group chips: one per container type, toggling every member at once.</summary>
+        private readonly List<(double x, double y, double w, ElementBounds bounds, string label, List<InventorySection> members)> groupChips = new();
+
+        /// <summary>Chip width in unscaled units. Narrow: the tiles carry the identity.</summary>
+        private const double ChipW = 30;
+
         /// <summary>Backing inventory for the vessel row's passive tiles.</summary>
         private readonly List<DummySlot> iconSlots = new();
 
@@ -112,6 +118,19 @@ namespace SymbioticInventories.Gui
         {
             base.OnGuiOpened();
             dockFocused = true;
+
+            // The crafting inventory must be OPENED, not merely displayed: recipe matching
+            // and ingredient consumption run server-side only for open inventories, and the
+            // open packet is what tells the server. Without this the grid accepted items and
+            // produced nothing - vanilla's own dialog does exactly this on open.
+            var im = capi.World.Player.InventoryManager;
+            var craftInv = im.GetOwnInventory(GlobalConstants.craftingInvClassName);
+            if (craftInv != null)
+            {
+                var packet = im.OpenInventory(craftInv);
+                if (packet != null) capi.Network.SendPacketClient(packet);
+            }
+
             Compose();
         }
 
@@ -120,6 +139,12 @@ namespace SymbioticInventories.Gui
             base.OnGuiClosed();
             dockFocused = false;
             UnwatchInventories();
+
+            // Counterpart of the open: lets the server drop grid contents back to the player
+            // the same way closing the vanilla crafting dialog does.
+            var im = capi.World.Player.InventoryManager;
+            var craftInv = im.GetOwnInventory(GlobalConstants.craftingInvClassName);
+            if (craftInv != null) im.CloseInventoryAndSync(craftInv);
         }
 
         public void Refresh()
@@ -139,6 +164,24 @@ namespace SymbioticInventories.Gui
         {
             if (IsOpened() && !args.Handled)
             {
+                // Group chips: hide the whole container type at once; if the whole group is
+                // already hidden, bring it all back.
+                foreach (var (_, _, _, bounds, _, members) in groupChips)
+                {
+                    if (!bounds.PointInside(args.X, args.Y)) continue;
+
+                    bool allHidden = members.TrueForAll(m => hiddenIds.Contains(m.Id));
+                    foreach (var m in members)
+                    {
+                        if (allHidden) hiddenIds.Remove(m.Id);
+                        else hiddenIds.Add(m.Id);
+                    }
+                    scrollY = 0;
+                    Compose();
+                    args.Handled = true;
+                    return;
+                }
+
                 foreach (var (_, _, bounds, s) in iconTiles)
                 {
                     if (!bounds.PointInside(args.X, args.Y)) continue;
@@ -165,12 +208,28 @@ namespace SymbioticInventories.Gui
             {
                 if (s.Number <= 0) continue;
                 numberedSections.Add(s);
+            }
+
+            // Group by container type (backpacks / chests / vessels / trunks...), groups in
+            // first-seen order, members in original order. The vessel row AND the flow share
+            // this ordering, so tiles and ribbons always read in the same sequence.
+            var groupOrder = new List<string>();
+            foreach (var s in numberedSections) if (!groupOrder.Contains(s.GroupKey)) groupOrder.Add(s.GroupKey);
+            numberedSections.Sort((a, b) =>
+            {
+                int ga = groupOrder.IndexOf(a.GroupKey), gb = groupOrder.IndexOf(b.GroupKey);
+                return ga != gb ? ga.CompareTo(gb) : a.Number.CompareTo(b.Number);
+            });
+
+            foreach (var s in numberedSections)
+            {
                 if (!hiddenIds.Contains(s.Id)) flowSections.Add(s);
             }
 
             scrollables.Clear();
             iconTiles.Clear();
             iconSlots.Clear();
+            groupChips.Clear();
 
             double scale = Math.Max(0.1, RuntimeEnv.GUIScale);
             double screenW = capi.Render.FrameWidth / scale;
@@ -193,18 +252,51 @@ namespace SymbioticInventories.Gui
             int totalSlots = 0;
             foreach (var s in flowSections) totalSlots += s.SlotCount;
 
-            double craftingW = crafting != null ? crafting.FixedColumns * LayoutMetrics.Cell + Pad : 0;
+            // Crafting is 3x3 PLUS its output slot to the right - the inventory's last slot.
+            // Without the output slot on screen there is nowhere for a craft result to
+            // appear (real bug: "I can put stuff in it but there is no output").
+            double craftingW = crafting != null
+                ? (crafting.FixedColumns + 1) * LayoutMetrics.Cell + 8 + Pad
+                : 0;
             double bagsW = bagSlots != null ? bagSlots.SlotCount * LayoutMetrics.Cell + Pad : 0;
             double craftingH = crafting != null
                 ? Math.Ceiling(crafting.SlotCount / (double)crafting.FixedColumns) * LayoutMetrics.Cell
                 : 0;
 
-            // Vessel tiles wrap within whatever width remains beside crafting and bags.
-            // ALL numbered sections get a tile - hidden ones render dimmed and click back on.
+            // Vessel row: group chips + tiles, wrapping within the width beside crafting and
+            // bags. ALL numbered sections get a tile - hidden ones render dimmed. Each group
+            // (chests / vessels / backpacks / trunks) is prefixed by a narrow chip that
+            // toggles the whole group at once.
             double iconAreaX = craftingW + bagsW;
-            double iconAreaW = Math.Max(IconTile, availW - iconAreaX);
-            int iconsPerRow = Math.Max(1, (int)(iconAreaW / (IconTile + 4)));
-            int iconRows = numberedSections.Count == 0 ? 0 : (int)Math.Ceiling(numberedSections.Count / (double)iconsPerRow);
+            double iconAreaW = Math.Max(IconTile + ChipW, availW - iconAreaX);
+
+            var stripItems = new List<(bool isChip, InventorySection s, List<InventorySection> members, double w)>();
+            {
+                string lastGroup = null;
+                foreach (var s in numberedSections)
+                {
+                    if (s.GroupKey != lastGroup)
+                    {
+                        lastGroup = s.GroupKey;
+                        var members = numberedSections.FindAll(m => m.GroupKey == s.GroupKey);
+                        if (members.Count > 1) stripItems.Add((true, s, members, ChipW + 4));
+                    }
+                    stripItems.Add((false, s, null, IconTile + 4));
+                }
+            }
+
+            // Wrap the variable-width sequence into rows.
+            var stripPos = new List<(double x, double y)>();
+            {
+                double sx = 0, sy = 0;
+                foreach (var item in stripItems)
+                {
+                    if (sx > 0 && sx + item.w > iconAreaW + 0.001) { sx = 0; sy += IconTile + 4; }
+                    stripPos.Add((sx, sy));
+                    sx += item.w;
+                }
+            }
+            int iconRows = stripItems.Count == 0 ? 0 : (int)((stripPos[^1].y / (IconTile + 4)) + 1);
 
             double stripH = Math.Max(craftingH, Math.Max(bagSlots != null ? LayoutMetrics.Cell : 0, iconRows * (IconTile + 4))) + Pad;
 
@@ -252,6 +344,13 @@ namespace SymbioticInventories.Gui
                 var b = ElementStdBounds.SlotGrid(EnumDialogArea.None, contentX, 0, crafting.FixedColumns,
                     (int)Math.Ceiling(crafting.SlotCount / (double)crafting.FixedColumns));
                 composer.AddItemSlotGrid(crafting.Inventory, crafting.SendPacket, crafting.FixedColumns, crafting.SlotIds, b, "grid-craft");
+
+                // Output slot: the crafting inventory's last slot, centered right of the grid.
+                int outId = crafting.Inventory.Count - 1;
+                var ob = ElementStdBounds.SlotGrid(EnumDialogArea.None,
+                    contentX + crafting.FixedColumns * LayoutMetrics.Cell + 8,
+                    (craftingH - LayoutMetrics.Cell) / 2, 1, 1);
+                composer.AddItemSlotGrid(crafting.Inventory, crafting.SendPacket, 1, new[] { outId }, ob, "grid-craftout");
             }
             if (bagSlots != null)
             {
@@ -259,11 +358,21 @@ namespace SymbioticInventories.Gui
                 composer.AddItemSlotGrid(bagSlots.Inventory, bagSlots.SendPacket, bagSlots.SlotCount, bagSlots.SlotIds, b, "grid-bags");
             }
 
-            for (int i = 0; i < numberedSections.Count; i++)
+            for (int i = 0; i < stripItems.Count; i++)
             {
-                var s = numberedSections[i];
-                double ix = contentX + iconAreaX + (i % iconsPerRow) * (IconTile + 4);
-                double iy = (i / iconsPerRow) * (IconTile + 4);
+                var item = stripItems[i];
+                double ix = contentX + iconAreaX + stripPos[i].x;
+                double iy = stripPos[i].y;
+
+                if (item.isChip)
+                {
+                    var chipBounds = ElementBounds.Fixed(ix, iy, ChipW, IconTile);
+                    composer.AddStaticCustomDraw(chipBounds, (ctx, surface, b) => { });   // gives the bounds world coords
+                    groupChips.Add((ix, iy, ChipW, chipBounds, item.s.Label, item.members));
+                    continue;
+                }
+
+                var s = item.s;
                 var tileBounds = ElementBounds.Fixed(ix, iy, IconTile, IconTile);
                 iconTiles.Add((ix, iy, tileBounds, s));
 
@@ -394,6 +503,42 @@ namespace SymbioticInventories.Gui
         private void DrawStripChrome(Context ctx, ElementBounds bounds)
         {
             double g = RuntimeEnv.GUIScale;
+
+            // Group chips: neutral tab showing the member count; slashed when the whole
+            // group is toggled off. Sits flush against its group's first tile.
+            foreach (var (x, y, w, _, _, members) in groupChips)
+            {
+                bool allHidden = members.TrueForAll(m => hiddenIds.Contains(m.Id));
+                double cx = bounds.drawX + (x - contentX) * g;
+                double cy = bounds.drawY + y * g;
+                double cw = w * g, chh = IconTile * g;
+
+                ctx.SetSourceRGBA(0.30, 0.28, 0.24, allHidden ? 0.45 : 0.85);
+                GuiElement.RoundRectangle(ctx, cx, cy, cw, chh, 3 * g);
+                ctx.Fill();
+                ctx.SetSourceRGBA(0.62, 0.60, 0.55, allHidden ? 0.4 : 0.8);
+                ctx.LineWidth = 1 * g;
+                GuiElement.RoundRectangle(ctx, cx, cy, cw, chh, 3 * g);
+                ctx.Stroke();
+
+                ctx.SetSourceRGBA(0.92, 0.90, 0.85, allHidden ? 0.5 : 0.95);
+                ctx.SelectFontFace(GuiStyle.StandardFontName, FontSlant.Normal, FontWeight.Bold);
+                ctx.SetFontSize(12 * g);
+                string t = "×" + members.Count;
+                var ext = ctx.TextExtents(t);
+                ctx.MoveTo(cx + cw / 2 - ext.Width / 2 - ext.XBearing, cy + chh / 2 + ext.Height / 2);
+                ctx.ShowText(t);
+
+                if (allHidden)
+                {
+                    ctx.SetSourceRGBA(0.85, 0.30, 0.25, 0.85);
+                    ctx.LineWidth = 2 * g;
+                    ctx.MoveTo(cx + 3 * g, cy + chh - 3 * g);
+                    ctx.LineTo(cx + cw - 3 * g, cy + 3 * g);
+                    ctx.Stroke();
+                }
+            }
+
             foreach (var (x, y, _, s) in iconTiles)
             {
                 bool hidden = hiddenIds.Contains(s.Id);

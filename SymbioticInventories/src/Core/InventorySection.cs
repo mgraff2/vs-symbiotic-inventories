@@ -70,6 +70,14 @@ namespace SymbioticInventories.Core
         /// </summary>
         public ItemStack Icon;
 
+        /// <summary>
+        /// Container-type key for group filtering: "backpack" for worn bags, the block
+        /// code's first path part for block containers ("chest", "trunk", "storagevessel"),
+        /// "entity" for creature/vehicle inventories. Sections sharing a key form one group
+        /// in the vessel row with a single toggle.
+        /// </summary>
+        public string GroupKey = "other";
+
         public int SlotCount => SlotIds?.Length ?? 0;
 
         /// <summary>Sections that carry a visible number badge. Crafting/hotbar are unambiguous already.</summary>

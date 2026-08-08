@@ -190,7 +190,14 @@ namespace SymbioticInventories.Gui
             }
             else
             {
-                budget.MaxWidth = Math.Max(4 * LayoutMetrics.Cell, screenW * 0.82 - RailW - Pad * 3);
+                // Cap the floating window at 18 slot-columns even on a wide monitor. Given
+                // unlimited width the packer's height-first score lays every section out in
+                // one enormous single row - technically optimal, unreadable in practice (seen
+                // in the first real screenshot). ~18 columns keeps the window inventory-shaped
+                // and forces storage to wrap into a block.
+                budget.MaxWidth = Math.Min(
+                    18 * LayoutMetrics.Cell,
+                    Math.Max(4 * LayoutMetrics.Cell, screenW * 0.82 - RailW - Pad * 3));
                 budget.MaxHeight = screenH * 0.86 - chromeH;
             }
 
@@ -278,23 +285,34 @@ namespace SymbioticInventories.Gui
             // one element keeps the count flat as containers open.
             composer.AddDynamicCustomDraw(viewport, (ctx, surface, bounds) => DrawChrome(ctx, bounds, false), ChromeKey);
 
+            // COORDINATE SPACES - both verified against engine IL, both invisible to the
+            // headless probe, both found by a real in-game screenshot:
+            //  * BeginClip parents every subsequent element to the clip bounds
+            //    (GuiElementClipHelpler.BeginClip -> BeginChildElements). Coordinates inside
+            //    the clip are therefore RELATIVE TO THE VIEWPORT, not the dialog. Absolute
+            //    coordinates here render everything double-offset and push the right half of
+            //    wide sections clean off the window.
+            //  * The dynamic chrome element draws on its own element-sized surface
+            //    (GuiElementCustomDraw.Redraw creates an ImageSurface of exactly
+            //    OuterWidth x OuterHeight), so DrawChrome's scrolling pass must use LOCAL
+            //    coordinates - absolute ones land off-surface and nothing appears at all.
             composer.BeginClip(viewport);
             foreach (var box in ScrollingBoxes())
             {
                 var s = box.Section;
-                double baseY = box.GridY;
+                double relY = box.GridY - scrollStart;   // viewport-relative
 
                 var gridBounds = ElementStdBounds.SlotGrid(
-                    EnumDialogArea.None, contentX + box.X, baseY - scrollY, box.Cols, box.Rows);
+                    EnumDialogArea.None, box.X, relY - scrollY, box.Cols, box.Rows);
 
                 composer.AddItemSlotGrid(s.Inventory, s.SendPacket, box.Cols, s.SlotIds, gridBounds, "grid-" + s.Id);
-                scrollables.Add((gridBounds, baseY));
+                scrollables.Add((gridBounds, relY));
             }
             composer.EndClip();
 
             if (scrolls)
             {
-                var sbBounds = ElementBounds.Fixed(contentX + contentW + 4, 0, 16, viewportH);
+                var sbBounds = ElementBounds.Fixed(contentX + contentW + 4, scrollStart, 16, viewportH);
                 composer.AddVerticalScrollbar(OnNewScrollbarValue, sbBounds, ScrollKey);
             }
 
@@ -312,16 +330,17 @@ namespace SymbioticInventories.Gui
         }
 
         /// <summary>
-        /// Moves the scrolled content without recomposing: grid bounds are nudged and the
-        /// chrome element is asked to redraw itself at the new offset.
+        /// Moves the scrolled content without recomposing: grid bounds are nudged (in
+        /// viewport-relative space - they are children of the clip) and the chrome element is
+        /// asked to redraw itself at the new offset.
         /// </summary>
         private void OnNewScrollbarValue(float value)
         {
             scrollY = value;
 
-            foreach (var (bounds, baseY) in scrollables)
+            foreach (var (bounds, relY) in scrollables)
             {
-                bounds.fixedY = baseY - scrollY;
+                bounds.fixedY = relY - scrollY;
                 bounds.CalcWorldBounds();
             }
 
@@ -372,12 +391,14 @@ namespace SymbioticInventories.Gui
 
         private void DrawChrome(Context ctx, ElementBounds bounds, bool pinned)
         {
-            // Both regions draw boxes at their plan-space Y, so the origin is whatever makes
-            // that land correctly. Pinned starts at the top of the content area; scrolling is
-            // shifted back by where the viewport begins and by how far it has been scrolled.
-            // The surface is only as big as its region, so Cairo clips the overspill for us.
-            double ox = bounds.drawX;
-            double oy = pinned ? bounds.drawY : bounds.drawY - scrollStart - scrollY;
+            // Two different coordinate spaces, dictated by the two element kinds (see the
+            // compose-time comment): the pinned pass draws on the shared dialog surface, so
+            // drawX/drawY are meaningful offsets; the scrolling pass draws on the chrome
+            // element's OWN surface, whose origin is the viewport's top-left - so the origin
+            // is local zero shifted back by viewport start and scroll. The surface is only as
+            // big as its region, so Cairo clips the overspill for us.
+            double ox = pinned ? bounds.drawX : 0;
+            double oy = pinned ? bounds.drawY : -scrollStart - scrollY;
 
             foreach (var band in plan.Bands)
             {

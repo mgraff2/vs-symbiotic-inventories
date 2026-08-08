@@ -200,6 +200,13 @@ across versions, the binding sweep covers patch-time across versions.
   has to move must not use it. The section chrome is one `AddDynamicCustomDraw` over the
   viewport, redrawn via `Redraw()` when the scroll offset changes; a static plate would stay
   put while its slot grid slid away.
+- **Composer coordinate spaces — verified against engine IL, learned from a real screenshot:**
+  elements added between `BeginClip`/`EndClip` are *children of the clip bounds* (BeginClip
+  calls `BeginChildElements`), so their coordinates are viewport-relative; and an interactive
+  `AddDynamicCustomDraw` element draws on its *own element-sized surface*, so its delegate
+  must use local coordinates — `bounds.drawX/drawY` only works for static draws on the shared
+  dialog surface. Getting either wrong doesn't error; content just renders displaced or not
+  at all, which the headless probe cannot see.
 - **Never recompose inside the scrollbar callback.** It destroys the element currently being
   dragged and the drag dies on the first pixel. Scroll by nudging `bounds.fixedY` +
   `CalcWorldBounds()` on the stored grid bounds (what vanilla does) and redrawing the chrome.

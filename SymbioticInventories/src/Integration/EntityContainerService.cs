@@ -103,19 +103,28 @@ namespace SymbioticInventories.Integration
         {
             var beh = ent.GetBehavior<EntityBehaviorAttachable>();
             var inv = beh?.Inventory;
+
+            // Rich diagnostics: this path can only be understood from a real animal's log.
+            // Report the entity, its behaviours, and every attached item so a single test
+            // tells us whether detection, the container filter, or the open is at fault.
+            string behaviours = string.Join(", ",
+                (ent.SidedProperties?.Behaviors ?? new List<EntityBehavior>())
+                .ConvertAll(b => { try { return b.PropertyName(); } catch { return b.GetType().Name; } }));
+            logger.Notification("[SymbioticInventories] Mount '{0}' behaviours: [{1}]; attachable={2}, invCount={3}.",
+                ent.GetName(), behaviours, beh != null, inv?.Count ?? -1);
+
             if (inv == null) return;
 
             var player = capi.World.Player.Entity;
             var savedSel = player.EntitySelection;
             var emptyHand = new DummySlot();
 
-            int opens = 0, scanned = 0;
+            int opens = 0, containers = 0, filled = 0;
             var doneSlots = new HashSet<int>();
 
             try
             {
-                // Scan 0-based boxes; each maps to an attached-inventory slot index.
-                for (int box0 = 0; box0 < 48 && opens < 8; box0++)
+                for (int box0 = 0; box0 < 64 && opens < 8; box0++)
                 {
                     int slotIndex;
                     try { slotIndex = beh.GetSlotIndexFromSelectionBoxIndex(box0); }
@@ -124,11 +133,18 @@ namespace SymbioticInventories.Integration
 
                     var slot = inv[slotIndex];
                     if (slot == null || slot.Empty) continue;
-                    scanned++;
+                    filled++;
 
-                    var sel = new EntitySelection { Entity = ent, SelectionBoxIndex = box0 + 1 };
-                    player.EntitySelection = sel;
+                    // ONLY open items that are containers (a held bag). Synth-interacting with
+                    // an empty hand on a cosmetic slot (hat, sock) would DETACH the accessory -
+                    // knocking your elk's hat off. IHeldBag is the safe, public gate.
+                    bool isContainer = slot.Itemstack?.Collectible?.GetCollectibleInterface<IHeldBag>() != null;
+                    logger.Notification("[SymbioticInventories]   box {0} -> slot {1}: {2}{3}",
+                        box0, slotIndex, slot.Itemstack?.Collectible?.Code, isContainer ? " [container]" : "");
+                    if (!isContainer) continue;
+                    containers++;
 
+                    player.EntitySelection = new EntitySelection { Entity = ent, SelectionBoxIndex = box0 + 1 };
                     var handling = EnumHandling.PassThrough;
                     beh.OnInteract(player, emptyHand, ent.Pos.XYZ, EnumInteractMode.Interact, ref handling);
                     if (handling != EnumHandling.PassThrough) opens++;
@@ -143,11 +159,9 @@ namespace SymbioticInventories.Integration
                 player.EntitySelection = savedSel;
             }
 
-            // Always log the outcome - this is the one capture path unverifiable without a
-            // live entity, so the log is how a real test tells us what actually happened.
             logger.Notification(
-                "[SymbioticInventories] {0}: scanned {1} filled attach-slot(s), {2} opened a container.",
-                ent.GetName(), scanned, opens);
+                "[SymbioticInventories] {0}: {1} filled slot(s), {2} container(s), {3} opened.",
+                ent.GetName(), filled, containers, opens);
         }
     }
 }

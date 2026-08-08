@@ -36,8 +36,9 @@ namespace SymbioticInventories.Core.Layout
             // DockLeft differs from Auto only in its budget - a narrow, tall content area. The
             // packers then wrap early and fill downward all by themselves, which is exactly the
             // locked-to-the-edge behaviour, so there is no separate strategy to maintain.
-            bool captions = budget.Mode != LayoutMode.DockLeft;
-            var plan = PackBands(sections, budget.MaxWidth, budget.MaxHeight, captions);
+            // No band captions: with a single band there is nothing left to caption, and the
+            // 20 units were coming straight out of the viewport.
+            var plan = PackBands(sections, budget.MaxWidth, budget.MaxHeight, captions: false);
             plan.Mode = budget.Mode;
             return plan;
         }
@@ -96,7 +97,7 @@ namespace SymbioticInventories.Core.Layout
                 band.Y = y;
                 double innerY = plan.ShowBandCaptions ? LayoutMetrics.BandCaptionH : 0;
 
-                if (band.Key == "storage" && jigsaw)
+                if (jigsaw)
                 {
                     // Opened storage interlocks like puzzle pieces - a tall chest and two
                     // short bags share the same rows instead of each paying for a shelf.
@@ -287,29 +288,20 @@ namespace SymbioticInventories.Core.Layout
         /// </summary>
         private static List<LayoutBand> GroupIntoBands(IReadOnlyList<InventorySection> sections)
         {
-            // Essentials are split out purely so they can be pinned: the crafting grid has to
-            // be reachable at all times, and once the window scrolls, "in the layout" and "on
-            // screen" stop being the same thing. Kept deliberately small.
-            var essentials = new LayoutBand { Key = "essentials", Title = "Essentials", Pinned = true };
-
-            // Backpacks and opened containers jigsaw together in one band. Registry order puts
-            // backpacks first, and skyline placement of earlier boxes never depends on later
-            // ones - so a bag keeps its exact position as chests open and close after it.
-            // Stability comes free; separate bands would only waste the interlock.
-            var storage = new LayoutBand { Key = "storage", Title = "Storage" };
-
-            foreach (var s in sections)
-            {
-                var target = s.Kind switch
-                {
-                    SectionKind.Crafting => essentials,
-                    SectionKind.BackpackSlots => essentials,
-                    _ => storage
-                };
-                target.Boxes.Add(new LayoutBox { Section = s });
-            }
-
-            return new List<LayoutBand> { essentials, storage };
+            // One band, everything jigsawed together. A separate full-width essentials band
+            // structurally wasted the whole strip right of the crafting grid - visible as a
+            // large dead zone in every real screenshot, while the storage below it scrolled.
+            // Registry order still leads with crafting and worn bags, so they land top-left,
+            // and skyline placement of earlier boxes never depends on later ones - crafting,
+            // bags and backpacks keep their exact positions as containers open and close.
+            //
+            // The cost, accepted deliberately: nothing is pinned any more, so in the rare
+            // layouts that still scroll (narrow dock, extreme container counts) the crafting
+            // grid scrolls too. Screen room while not scrolling beats a pinned strip that
+            // guaranteed scrolling.
+            var all = new LayoutBand { Key = "all", Title = null };
+            foreach (var s in sections) all.Boxes.Add(new LayoutBox { Section = s });
+            return new List<LayoutBand> { all };
         }
     }
 }

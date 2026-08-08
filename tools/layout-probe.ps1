@@ -157,25 +157,16 @@ function Test-Plan($name, $plan, $budget) {
         $script:failures += "$name : height $([math]::Round($plan.Height)) exceeds budget $([math]::Round($budget.MaxHeight)) but Overflows is false"
     }
 
-    # The crafting grid must never be able to scroll out of view. In the banded modes it has
-    # to live in a pinned band.
-    $pinnedH = 0
-    $craftingPinned = $false
-    foreach ($band in $plan.Bands) {
-        if (-not $band.Pinned) { continue }
-        if ($band.Boxes.Count -gt 0) { $pinnedH = [Math]::Max($pinnedH, $band.Y + $band.H) }
-        foreach ($b in $band.Boxes) { if ($b.Section.Label -eq 'Crafting') { $craftingPinned = $true } }
-    }
-    if (-not $craftingPinned) {
-        $script:failures += "$name : crafting grid is not in a pinned band - it can scroll out of view"
+    # There is no pinned band any more (space won over pinning), so the guarantee that
+    # remains is positional: crafting is registered first and skyline placement of earlier
+    # boxes never depends on later ones, so it must sit at the top-left origin - the spot
+    # that is visible whenever the window is at its default (unscrolled) state.
+    $crafting = $boxes | Where-Object { $_.Section.Label -eq 'Crafting' } | Select-Object -First 1
+    if ($crafting -and ($crafting.X -gt 0.01 -or $crafting.Y -gt 0.01)) {
+        $script:failures += "$name : crafting grid is at ($([math]::Round($crafting.X)),$([math]::Round($crafting.Y))), not the top-left origin"
     }
 
-    # A pinned region that eats the window defeats the scroll viewport it protects.
-    if ($pinnedH -gt $budget.MaxHeight * 0.5) {
-        $script:failures += "$name : pinned region $([math]::Round($pinnedH)) is over half the height budget $([math]::Round($budget.MaxHeight))"
-    }
-
-    return @{ boxes = $boxes.Count; placed = $placed; pinned = $pinnedH }
+    return @{ boxes = $boxes.Count; placed = $placed; pinned = 0 }
 }
 
 function Show-Map($plan, $budget) {

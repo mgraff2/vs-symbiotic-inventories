@@ -82,7 +82,11 @@ namespace SymbioticInventories.Gui
 
             var spoilLabel = ElementBounds.Fixed(LabelX, y + 2, SliderLabelW, 26);
             var spoilSlider = ElementBounds.Fixed(LabelX + SliderLabelW, y, W - LabelX - SliderLabelW, SliderH);
-            y += SliderH + GroupGap;
+            y += SliderH + RowGap;
+
+            var freshSwitch = ElementBounds.Fixed(0, y, SwitchSize, SwitchSize);
+            var freshLabel = ElementBounds.Fixed(LabelX, y + 4, W - LabelX, 26);
+            y += SwitchSize + GroupGap;
 
             var mountSwitch = ElementBounds.Fixed(0, y, SwitchSize, SwitchSize);
             var mountLabel = ElementBounds.Fixed(LabelX, y + 4, W - LabelX, 26);
@@ -120,6 +124,9 @@ namespace SymbioticInventories.Gui
                     .AddStaticText(Lang.Get("symbioticinventories:opt-food-spoil"),
                         CairoFont.WhiteSmallishText(), spoilLabel)
                     .AddSlider(OnSpoilDaysChanged, spoilSlider, "spoilSlider")
+                    .AddSwitch(v => { config.SortFoodByFreshness = v; onChanged?.Invoke(); }, freshSwitch, "swFresh")
+                    .AddStaticText(Lang.Get("symbioticinventories:opt-food-freshness"),
+                        CairoFont.WhiteSmallishText(), freshLabel)
                     .AddSwitch(OnToggleMount, mountSwitch, "mountSwitch")
                     .AddStaticText(Lang.Get("symbioticinventories:opt-mount"),
                         CairoFont.WhiteSmallishText(), mountLabel)
@@ -140,6 +147,7 @@ namespace SymbioticInventories.Gui
             SingleComposer.GetSwitch("swOre").On = config.SortPrioritizeOre;
             SingleComposer.GetSlider("spoilSlider").SetValues(
                 Math.Clamp(config.SortFoodMaxSpoilDays, 0, 30), 0, 30, 1, " " + Lang.Get("symbioticinventories:days-unit"));
+            SingleComposer.GetSwitch("swFresh").On = config.SortFoodByFreshness;
             SingleComposer.GetSwitch("mountSwitch").On = config.ShowMountInventory;
             SingleComposer.GetSlider("entityRadSlider").SetValues(
                 Math.Clamp(config.NearbyEntityRadius, 0, 10), 0, 10, 1, " " + Lang.Get("symbioticinventories:blocks-unit"));

@@ -44,6 +44,13 @@ namespace SymbioticInventories.Core
         public int SortFoodMaxSpoilDays { get; set; } = 0;
 
         /// <summary>
+        /// Order food within its group by remaining freshness - soonest to spoil first - so
+        /// what you should eat next sits at the front. Off: food orders by type like everything
+        /// else.
+        /// </summary>
+        public bool SortFoodByFreshness { get; set; } = false;
+
+        /// <summary>
         /// Show the inventory of the mount the player is riding (elk saddlebags, etc.) in the
         /// master window automatically, without opening it by hand.
         /// </summary>

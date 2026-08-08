@@ -69,6 +69,20 @@ namespace SymbioticInventories.Core
             return false;
         }
 
+        /// <summary>Remaining fresh hours before this stack starts to spoil; MaxValue if it
+        /// never perishes (or is not food). Non-perishing sorts last under a freshness order.</summary>
+        private static float FreshHoursLeft(IWorldAccessor world, ItemSlot slot, ItemStack st)
+        {
+            var c = st?.Collectible;
+            if (c?.NutritionProps == null) return float.MaxValue;
+            try
+            {
+                var state = c.UpdateAndGetTransitionState(world, slot, EnumTransitionType.Perish);
+                return state?.FreshHoursLeft ?? float.MaxValue;
+            }
+            catch { return float.MaxValue; }
+        }
+
         /// <summary>Sorts across the given sections (visible flow order). Returns moves made.</summary>
         public static int Sort(ICoreClientAPI capi, IReadOnlyList<InventorySection> visible, ModConfig cfg)
         {
@@ -91,30 +105,36 @@ namespace SymbioticInventories.Core
             }
 
             // ---- desired arrangement -------------------------------------------
-            // Each item carries whether it is a prioritised category, computed per slot so the
-            // food freshness sub-filter can read the perish state.
-            var items = new List<(ItemStack st, bool prio)>();
+            // Each item carries whether it is a prioritised category and its remaining fresh
+            // hours - both computed per slot, so the food freshness filter and freshness order
+            // can read the perish state (only when those options are on).
+            var items = new List<(ItemStack st, bool prio, float fresh)>();
             for (int i = 0; i < cells.Count; i++)
             {
                 var slot = SlotAt(i);
-                if (slot != null && !slot.Empty)
-                    items.Add((slot.Itemstack, IsPriority(capi.World, slot, slot.Itemstack, cfg)));
+                if (slot == null || slot.Empty) continue;
+                float fresh = cfg.SortFoodByFreshness ? FreshHoursLeft(capi.World, slot, slot.Itemstack) : 0f;
+                items.Add((slot.Itemstack, IsPriority(capi.World, slot, slot.Itemstack, cfg), fresh));
             }
 
             // Prioritised categories float to the front of the sequence. The flow lays the
             // sequence out from the first cell, and the worn backpacks are the first cells, so
-            // front-of-sequence == into-the-backpacks. Grouping and per-category ordering are
-            // untouched; only the group ORDER changes. A category counts as prioritised if any
-            // of its stacks is (e.g. perishable bread present, dried grain not).
+            // front-of-sequence == into-the-backpacks. Only the group ORDER changes; a category
+            // counts as prioritised if any of its stacks is. Within a food group, freshness
+            // order (soonest-to-spoil first) applies when enabled; otherwise by type.
             var groups = items
                 .GroupBy(x => CategoryOf(x.st))
                 .OrderBy(g => g.Any(x => x.prio) ? 0 : 1)
                 .ThenBy(g => g.Key, StringComparer.Ordinal)
-                .Select(g => g
-                    .Select(x => x.st)
-                    .OrderBy(ItemKeyOf, StringComparer.Ordinal)
-                    .ThenByDescending(st => st.StackSize)
-                    .ToList())
+                .Select(g =>
+                {
+                    var list = g.ToList();
+                    bool byFresh = cfg.SortFoodByFreshness && list.Any(x => x.st.Collectible?.NutritionProps != null);
+                    var ordered = byFresh
+                        ? list.OrderBy(x => x.fresh).ThenBy(x => ItemKeyOf(x.st), StringComparer.Ordinal)
+                        : list.OrderBy(x => ItemKeyOf(x.st), StringComparer.Ordinal).ThenByDescending(x => x.st.StackSize);
+                    return ordered.Select(x => x.st).ToList();
+                })
                 .ToList();
 
             // Container extents in cell space.

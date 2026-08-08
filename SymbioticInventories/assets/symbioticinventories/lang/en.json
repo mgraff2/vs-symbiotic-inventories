@@ -32,6 +32,7 @@
   "cat-ore": "Ore & nuggets",
   "opt-food-spoil": "…only food spoiling within",
   "days-unit": "days",
+  "opt-food-freshness": "Order food by freshness (soonest to spoil first)",
   "opt-mount": "Show your mount's inventory",
   "opt-mount-hint": "Elk saddlebags and pack-animal bags of the mount you are riding appear in the window automatically. Nearby boats open all their crates at once.",
   "opt-entity-radius": "Include mounts/boats within"

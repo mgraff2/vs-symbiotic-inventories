@@ -154,7 +154,12 @@ foreach ($combo in $combos) {
     Copy-Item $ourZip "$dp\Mods"
     foreach ($id in $combo.expect) { Copy-Item $mods[$id] "$dp\Mods" }
 
-    $proc = Start-Process $ServerExe -ArgumentList "--dataPath", $dp -PassThru -WindowStyle Hidden
+    # Random high port per combo: the default 42420 is held by any running game client
+    # (including the user playing singleplayer while a gate runs), and the server dies in
+    # socket bind with SocketException 10048 BEFORE loading mods - which reads as a mod
+    # failure but is pure environment.
+    $port = Get-Random -Minimum 42500 -Maximum 42999
+    $proc = Start-Process $ServerExe -ArgumentList "--dataPath", $dp, "--port", $port -PassThru -WindowStyle Hidden
     $log = "$dp\Logs\server-main.log"
     $debugLog = "$dp\Logs\server-debug.log"
     $booted = $false

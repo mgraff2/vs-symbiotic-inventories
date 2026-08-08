@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Line break between on-body and off-body storage.** The first chest/vehicle/mount section
+  starts on a fresh row, leaving the rest of the worn bags' last line empty - one grid, two
+  readable blocks: what's on you, then everything else.
 - **Fixed** carcass harvesting: carving a dead animal no longer gets swallowed by the master
   window - the harvest loot dialog passes through untouched, so you can collect the drops.
 - **Open cellar now reaches the whole cellar.** The server enforces pick range on every open,

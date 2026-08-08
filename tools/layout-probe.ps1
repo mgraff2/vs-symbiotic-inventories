@@ -7,14 +7,17 @@
     contiguous ribbon of cells (like a text selection). That math is pure computation, so it
     is tested without launching the client. Invariants:
 
-      * ribbons are contiguous: each starts exactly where the previous ended
+      * ribbons are contiguous: each starts exactly where the previous ended, EXCEPT at
+        the one deliberate line break - the first off-body section (chest/vehicle/mount)
+        starts on a fresh row, leaving the tail of the worn bags' last row empty
       * every ribbon's slices cover its slot count exactly, in order, with correct offsets
       * at most three slices per ribbon (lead partial, full-rows block, tail partial)
       * no slice exceeds the grid width; slice geometry matches its cell run
-      * total rows = ceil(total slots / cols)
+      * total rows = ceil(cells consumed / cols), where cells include the break's skip
 
     Prints an ASCII map per scenario - with a flow layout the map should read as solid
-    lines of glyphs with no holes anywhere except after the final cell.
+    lines of glyphs with no holes anywhere except the on-body/off-body seam and after
+    the final cell.
 
 .EXAMPLE
     .\tools\layout-probe.ps1
@@ -110,19 +113,28 @@ $scenarios = @{
 
 $failures = @()
 
+# On-body kinds flow first; the first off-body ribbon starts on a fresh row (the line break).
+$onBodyKinds = @('Crafting', 'Hotbar', 'BackpackSlots', 'Backpack')
+
 function Test-Plan($name, $plan) {
-    $total = 0
     $expectedStart = 0
+    $prevOnBody = $false
 
     foreach ($ribbon in $plan.Ribbons) {
         $slots = $ribbon.Section.SlotIds.Length
         $label = $ribbon.Section.Label
 
+        # Mirror the one legal discontinuity: on-body -> off-body rounds up to a row start.
+        $onBody = $onBodyKinds -contains $ribbon.Section.Kind.ToString()
+        if ($prevOnBody -and -not $onBody -and ($expectedStart % $plan.Cols) -ne 0) {
+            $expectedStart += $plan.Cols - ($expectedStart % $plan.Cols)
+        }
+        $prevOnBody = $onBody
+
         if ($ribbon.StartCell -ne $expectedStart) {
             $script:failures += "$name : '$label' starts at cell $($ribbon.StartCell), expected $expectedStart - flow has a gap or overlap"
         }
         $expectedStart = $ribbon.StartCell + $slots
-        $total += $slots
 
         if ($ribbon.Slices.Count -gt 3) {
             $script:failures += "$name : '$label' has $($ribbon.Slices.Count) slices (max 3)"
@@ -152,17 +164,18 @@ function Test-Plan($name, $plan) {
         }
     }
 
-    if ($plan.TotalSlots -ne $total) {
-        $script:failures += "$name : plan.TotalSlots=$($plan.TotalSlots), sections sum to $total"
+    # expectedStart has walked every ribbon plus the break skip: it IS the cells consumed.
+    if ($plan.TotalCells -ne $expectedStart) {
+        $script:failures += "$name : plan.TotalCells=$($plan.TotalCells), walk says $expectedStart"
     }
-    $expectRows = if ($total -eq 0) { 0 } else { [math]::Ceiling($total / [double]$plan.Cols) }
+    $expectRows = if ($expectedStart -eq 0) { 0 } else { [math]::Ceiling($expectedStart / [double]$plan.Cols) }
     if ($plan.Rows -ne $expectRows) {
         $script:failures += "$name : plan.Rows=$($plan.Rows), expected $expectRows"
     }
 }
 
 function Show-Map($plan) {
-    if ($plan.TotalSlots -eq 0) { return }
+    if ($plan.TotalCells -eq 0) { return }
     $glyphs = '123456789ABCDEFGHJKLMNPQRSTUVWXYZ'
     $rows = @()
     $line = ' ' * 0
@@ -218,7 +231,7 @@ foreach ($scenarioName in @('minimal', 'typical', 'boat', 'warehouse', 'heavy'))
         $label = "$scenarioName/$modeName"
         Test-Plan $label $plan
 
-        Write-Host ("{0,-20} cols={1,-3} rows={2,-3} slots={3}" -f $label, $plan.Cols, $plan.Rows, $plan.TotalSlots) -ForegroundColor Green
+        Write-Host ("{0,-20} cols={1,-3} rows={2,-3} cells={3}" -f $label, $plan.Cols, $plan.Rows, $plan.TotalCells) -ForegroundColor Green
         Show-Map $plan
         Write-Host ""
     }

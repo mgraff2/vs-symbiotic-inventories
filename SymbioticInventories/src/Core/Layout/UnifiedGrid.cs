@@ -44,7 +44,10 @@ namespace SymbioticInventories.Core.Layout
     {
         public int Cols;
         public int Rows;
-        public int TotalSlots;
+
+        /// <summary>Cells the flow consumed - slots plus the skipped tail of the on-body
+        /// block's last row (the deliberate line break before off-body storage).</summary>
+        public int TotalCells;
         public readonly List<Ribbon> Ribbons = new();
     }
 
@@ -71,10 +74,21 @@ namespace SymbioticInventories.Core.Layout
             var plan = new UnifiedPlan { Cols = cols };
 
             int cell = 0;
+            bool prevOnBody = false;
             foreach (var s in flow)
             {
                 int n = s.SlotCount;
                 if (n <= 0) continue;
+
+                // One line break where the worn bags end: the first off-body section starts
+                // on a fresh row, leaving the rest of the bags' last line empty. Same grid,
+                // same flow - just a visual seam between what is on you and what is not.
+                bool onBody = IsOnBody(s.Kind);
+                if (prevOnBody && !onBody && cell % cols != 0)
+                {
+                    cell += cols - cell % cols;
+                }
+                prevOnBody = onBody;
 
                 var ribbon = new Ribbon { Section = s, StartCell = cell };
 
@@ -118,10 +132,15 @@ namespace SymbioticInventories.Core.Layout
                 plan.Ribbons.Add(ribbon);
             }
 
-            plan.TotalSlots = cell;
+            plan.TotalCells = cell;
             plan.Rows = (int)Math.Ceiling(cell / (double)cols);
             return plan;
         }
+
+        /// <summary>Sections the player carries, as opposed to world/entity storage.</summary>
+        public static bool IsOnBody(SectionKind kind)
+            => kind is SectionKind.Crafting or SectionKind.Hotbar
+                    or SectionKind.BackpackSlots or SectionKind.Backpack;
 
         /// <summary>
         /// Columns for the flow, chosen to fill the landscape instead of stacking into a tall

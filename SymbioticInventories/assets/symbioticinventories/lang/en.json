@@ -25,5 +25,7 @@
   "opt-adjacent": "Open adjacent chests together",
   "opt-adjacent-hint": "One right-click on a chest also opens every chest of the same kind nearby, docking the whole wall into the window at once. Locked or claimed chests stay shut.",
   "opt-adjacent-radius": "Include chests within",
-  "blocks-unit": "blocks"
+  "blocks-unit": "blocks",
+  "opt-mount": "Show the inventory of the mount you are riding",
+  "opt-entity-radius": "Include mounts/boats within"
 }

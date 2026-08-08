@@ -15,6 +15,7 @@ namespace SymbioticInventories
         private Harmony harmony;
         private ICoreClientAPI capi;
         private DialogCaptureService capture;
+        private EntityContainerService entityContainers;
         private GuiDialogMasterInventory window;
         private GuiDialogOptions options;
         private ModConfig config;
@@ -36,6 +37,9 @@ namespace SymbioticInventories
             capture = new DialogCaptureService();
             capture.Start(api, harmony, Mod.Logger, config);
 
+            entityContainers = new EntityContainerService();
+            entityContainers.Start(api, config, capture, Mod.Logger);
+
             var registry = new SectionRegistry(api, capture);
             window = new GuiDialogMasterInventory(api, registry);
             options = new GuiDialogOptions(api, config, () => api.StoreModConfig(config, ModConfig.Filename));
@@ -48,7 +52,12 @@ namespace SymbioticInventories
                 GlKeys.B,
                 HotkeyType.GUIOrOtherControls);
 
-            api.Input.SetHotKeyHandler(GuiDialogMasterInventory.HotkeyCode, _ => { window.Toggle(); return true; });
+            api.Input.SetHotKeyHandler(GuiDialogMasterInventory.HotkeyCode, _ =>
+            {
+                window.Toggle();
+                if (window.IsOpened()) entityContainers.Discover();
+                return true;
+            });
 
             // Docked mode: the window stays locked at the edge while the mouse stays with the
             // game; this key hands the cursor to the window and takes it back.
@@ -64,6 +73,15 @@ namespace SymbioticInventories
             // Opening a chest has to bring the master window up, otherwise capturing it
             // would just make the container disappear with nowhere to show its contents.
             capture.OnCapturesChanged += OnCapturesChanged;
+
+            // While the window is up, keep discovering mount/boat containers - the player may
+            // mount an elk or walk up to a boat after opening it. 500 ms is imperceptible and
+            // the service skips entities it has already opened.
+            api.Event.RegisterGameTickListener(_ =>
+            {
+                if (window.IsOpened()) entityContainers.Discover();
+                else entityContainers.Reset();
+            }, 500);
 
             Mod.Logger.Notification("[SymbioticInventories] Ready.");
         }

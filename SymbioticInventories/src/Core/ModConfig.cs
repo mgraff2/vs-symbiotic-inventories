@@ -24,5 +24,18 @@ namespace SymbioticInventories.Core
         /// air gaps between rows that a flood fill cannot cross.
         /// </summary>
         public int AdjacentOpenRadius { get; set; } = 3;
+
+        /// <summary>
+        /// Show the inventory of the mount the player is riding (elk saddlebags, etc.) in the
+        /// master window automatically, without opening it by hand.
+        /// </summary>
+        public bool ShowMountInventory { get; set; } = true;
+
+        /// <summary>
+        /// Also pull in container-carrying entities (pack animals, moored boats) within this
+        /// many blocks, 0 to only show the one you are mounted on. For boats, every crate on
+        /// the vessel is opened at once.
+        /// </summary>
+        public int NearbyEntityRadius { get; set; } = 0;
     }
 }

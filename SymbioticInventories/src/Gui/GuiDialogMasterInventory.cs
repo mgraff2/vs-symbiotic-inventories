@@ -348,8 +348,9 @@ namespace SymbioticInventories.Gui
             // scale setting - is the lever for overall window size.
             double availH = screenH * 0.86 - chromeH;
 
-            // ---- top strip: crafting + worn bags + vessel row -------------------
+            // ---- top strip: crafting + character + worn bags + vessel row -------
             var crafting = sections.Find(s => s.Kind == SectionKind.Crafting);
+            var character = sections.Find(s => s.Kind == SectionKind.Character);
             var bagSlots = sections.Find(s => s.Kind == SectionKind.BackpackSlots);
 
             // Frame capacity is ALL open containers, hidden ones included: the window sizes
@@ -366,12 +367,16 @@ namespace SymbioticInventories.Gui
             double craftingW = crafting != null
                 ? (crafting.FixedColumns + 1) * LayoutMetrics.Cell + 8 + Pad
                 : 0;
-            double bagsW = bagSlots != null ? bagSlots.SlotCount * LayoutMetrics.Cell + Pad : 0;
-            double craftingH = crafting != null
-                ? Math.Ceiling(crafting.SlotCount / (double)crafting.FixedColumns) * LayoutMetrics.Cell
+            double characterW = character != null ? character.FixedColumns * LayoutMetrics.Cell + Pad : 0;
+            double characterH = character != null
+                ? Math.Ceiling(character.SlotCount / (double)character.FixedColumns) * LayoutMetrics.Cell
                 : 0;
+            double bagsW = bagSlots != null ? bagSlots.SlotCount * LayoutMetrics.Cell + Pad : 0;
+            double craftingH = Math.Max(characterH, crafting != null
+                ? Math.Ceiling(crafting.SlotCount / (double)crafting.FixedColumns) * LayoutMetrics.Cell
+                : 0);
 
-            double iconAreaX = craftingW + bagsW;
+            double iconAreaX = craftingW + characterW + bagsW;
 
             // ---- the flow WIDTH is chosen first, and everything else fits inside it -------
             // The strip used to wrap to the full available width, making the window wide while
@@ -460,9 +465,15 @@ namespace SymbioticInventories.Gui
                     TitleH + (craftingH - LayoutMetrics.Cell) / 2, 1, 1);
                 composer.AddItemSlotGrid(crafting.Inventory, crafting.SendPacket, 1, new[] { outId }, ob, "grid-craftout");
             }
+            if (character != null)
+            {
+                int cRows = (int)Math.Ceiling(character.SlotCount / (double)character.FixedColumns);
+                var b = ElementStdBounds.SlotGrid(EnumDialogArea.None, contentX + craftingW, TitleH, character.FixedColumns, cRows);
+                composer.AddItemSlotGrid(character.Inventory, character.SendPacket, character.FixedColumns, character.SlotIds, b, "grid-char");
+            }
             if (bagSlots != null)
             {
-                var b = ElementStdBounds.SlotGrid(EnumDialogArea.None, contentX + craftingW, TitleH, bagSlots.SlotCount, 1);
+                var b = ElementStdBounds.SlotGrid(EnumDialogArea.None, contentX + craftingW + characterW, TitleH, bagSlots.SlotCount, 1);
                 composer.AddItemSlotGrid(bagSlots.Inventory, bagSlots.SendPacket, bagSlots.SlotCount, bagSlots.SlotIds, b, "grid-bags");
             }
 

@@ -17,11 +17,13 @@ namespace SymbioticInventories.Core
     {
         private readonly ICoreClientAPI capi;
         private readonly DialogCaptureService capture;
+        private readonly ModConfig config;
 
-        public SectionRegistry(ICoreClientAPI capi, DialogCaptureService capture)
+        public SectionRegistry(ICoreClientAPI capi, DialogCaptureService capture, ModConfig config)
         {
             this.capi = capi;
             this.capture = capture;
+            this.config = config;
         }
 
         public List<InventorySection> Build()
@@ -34,6 +36,7 @@ namespace SymbioticInventories.Core
             int badge = 0;
 
             AddCrafting(sections, im);
+            AddCharacter(sections, im);
             AddBagSlots(sections, im);
             AddBackpacks(sections, im, ref badge);
             AddCaptured(sections, ref badge);
@@ -65,6 +68,31 @@ namespace SymbioticInventories.Core
                 Inventory = inv,
                 SlotIds = Enumerable.Range(0, side * side).ToArray(),
                 FixedColumns = side,   // a crafting grid is square because its recipes are
+                SendPacket = SendPlayerPacket
+            });
+        }
+
+        /// <summary>
+        /// The character (armour/clothing) slots, so the window is a full replacement for the
+        /// vanilla inventory screen. Rendered as a compact grid roughly the crafting grid's
+        /// height; the slots keep their own accepted-item rules and background icons.
+        /// </summary>
+        private void AddCharacter(List<InventorySection> sections, IPlayerInventoryManager im)
+        {
+            if (config != null && !config.ShowCharacterSlots) return;
+
+            var inv = im.GetOwnInventory(GlobalConstants.characterInvClassName);
+            if (inv == null || inv.Count == 0) return;
+
+            sections.Add(new InventorySection
+            {
+                Id = "character",
+                Label = Lang.Get("symbioticinventories:section-character"),
+                Kind = SectionKind.Character,
+                Accent = SectionPalette.Neutral,
+                Inventory = inv,
+                SlotIds = Enumerable.Range(0, inv.Count).ToArray(),
+                FixedColumns = Math.Max(1, (int)Math.Ceiling(inv.Count / 3.0)),   // ~3 rows tall
                 SendPacket = SendPlayerPacket
             });
         }

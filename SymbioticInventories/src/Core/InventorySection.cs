@@ -9,6 +9,7 @@ namespace SymbioticInventories.Core
     public enum SectionKind
     {
         Crafting,
+        Character,
         Hotbar,
         BackpackSlots,
         Backpack,

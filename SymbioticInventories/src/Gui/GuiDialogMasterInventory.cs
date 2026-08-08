@@ -331,8 +331,12 @@ namespace SymbioticInventories.Gui
             double chromeH = 40 + FooterH + Pad * 3;
             double availW = docked
                 ? Math.Min(screenW * 0.28, 10 * LayoutMetrics.Cell)
-                : Math.Max(8 * LayoutMetrics.Cell, screenW * 0.92 - Pad * 2);
-            double availH = screenH * 0.92 - chromeH;
+                : Math.Max(8 * LayoutMetrics.Cell, screenW * 0.86 - Pad * 2);
+            // 0.86 leaves a margin around the window instead of running edge-to-edge. Slot
+            // cells cannot be shrunk (the engine renders them at a fixed unscaledSlotSize *
+            // GUI scale, with no per-grid override), so this margin - plus the player's GUI
+            // scale setting - is the lever for overall window size.
+            double availH = screenH * 0.86 - chromeH;
 
             // ---- top strip: crafting + worn bags + vessel row -------------------
             var crafting = sections.Find(s => s.Kind == SectionKind.Crafting);

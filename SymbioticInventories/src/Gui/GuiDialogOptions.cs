@@ -1,6 +1,7 @@
 using System;
 using SymbioticInventories.Core;
 using Vintagestory.API.Client;
+using Vintagestory.API.Common;
 using Vintagestory.API.Config;
 
 namespace SymbioticInventories.Gui
@@ -30,20 +31,44 @@ namespace SymbioticInventories.Gui
             Compose();
         }
 
-        // Compact layout, unscaled GUI units. Small font + hover tooltips instead of inline
-        // hint paragraphs - the paragraphs made the window a tall wall of text.
-        private const double W = 430;          // content width
-        private const double SwitchSize = 22;  // switch square
-        private const double LabelX = 30;      // text left edge, right of a switch
-        private const double Row = 26;          // switch-row pitch
-        private const double SmallGap = 3;
-        private const double GroupGap = 12;
-        private const double SliderLabelW = 200;
+        // Clean single-column layout, unscaled GUI units. Every row is switch-then-label or
+        // label-then-slider, all left-aligned to the same grid - the 2x2 switch block and
+        // mixed slider widths were what read as "a mess". Small font, hover tooltips carry
+        // the detail so no inline hint paragraphs.
+        private const double W = 380;          // content width
+        private const double SwitchSize = 20;
+        private const double LabelX = 28;      // text left edge, right of a switch
+        private const double Row = 25;          // switch-row pitch
+        private const double SmallGap = 2;
+        private const double GroupGap = 14;
+        private const double SliderX = 180;     // sliders all start here, same width
         private const double SliderH = 20;
-        private const double TipW = 320;        // tooltip wrap width
+        private const int TipW = 300;
 
-        private static CairoFont Label() => CairoFont.WhiteSmallText().WithFontSize(15);
-        private static CairoFont Header() => CairoFont.WhiteSmallText().WithFontSize(15).WithWeight(Cairo.FontWeight.Bold);
+        private static CairoFont Label() => CairoFont.WhiteSmallText().WithFontSize(14);
+        private static CairoFont Header() => CairoFont.WhiteSmallText().WithFontSize(14).WithWeight(Cairo.FontWeight.Bold);
+
+        // Cursor state threaded through the row helpers.
+        private GuiComposer c;
+        private double yc;
+
+        /// <summary>A switch + label row, with an optional hover tooltip over the whole row.</summary>
+        private void SwitchRow(string key, string labelKey, Action<bool> onToggle, string tipKey = null)
+        {
+            c.AddSwitch(onToggle, ElementBounds.Fixed(0, yc, SwitchSize, SwitchSize), key, SwitchSize);
+            c.AddStaticText(Lang.Get(labelKey), Label(), ElementBounds.Fixed(LabelX, yc + 2, W - LabelX, 20));
+            if (tipKey != null) c.AddHoverText(Lang.Get(tipKey), Label(), TipW, ElementBounds.Fixed(0, yc, W, Row));
+            yc += Row + SmallGap;
+        }
+
+        /// <summary>A label + right-aligned slider row (sliders all share SliderX and width).</summary>
+        private void SliderRow(string key, string labelKey, ActionConsumable<int> onChange, string tipKey = null)
+        {
+            c.AddStaticText(Lang.Get(labelKey), Label(), ElementBounds.Fixed(0, yc + 1, SliderX - 4, 20));
+            c.AddSlider(onChange, ElementBounds.Fixed(SliderX, yc, W - SliderX, SliderH), key);
+            if (tipKey != null) c.AddHoverText(Lang.Get(tipKey), Label(), TipW, ElementBounds.Fixed(0, yc, W, SliderH));
+            yc += SliderH + GroupGap;
+        }
 
         private void Compose()
         {
@@ -51,90 +76,33 @@ namespace SymbioticInventories.Gui
                 .WithFixedPadding(GuiStyle.ElementToDialogPadding);
             bgBounds.BothSizing = ElementSizing.FitToChildren;
 
-            var dialogBounds = ElementStdBounds.AutosizedMainDialog
-                .WithAlignment(EnumDialogArea.CenterMiddle);
+            var dialogBounds = ElementStdBounds.AutosizedMainDialog.WithAlignment(EnumDialogArea.CenterMiddle);
 
-            double y = 0;
-
-            var adjSwitch = ElementBounds.Fixed(0, y, SwitchSize, SwitchSize);
-            var adjLabel = ElementBounds.Fixed(LabelX, y + 3, W - LabelX, 22);
-            var adjRow = ElementBounds.Fixed(0, y, W, Row);
-            y += Row + SmallGap;
-
-            var radLabel = ElementBounds.Fixed(LabelX, y + 1, SliderLabelW, 22);
-            var radSlider = ElementBounds.Fixed(LabelX + SliderLabelW, y, W - LabelX - SliderLabelW, SliderH);
-            y += SliderH + GroupGap;
-
-            var sortHeader = ElementBounds.Fixed(0, y + 1, W, 22);
-            var sortHeaderRow = ElementBounds.Fixed(0, y, W, 22);
-            y += 24;
-
-            double col2 = W / 2;
-            var toolsSwitch = ElementBounds.Fixed(0, y, SwitchSize, SwitchSize);
-            var toolsLabel = ElementBounds.Fixed(LabelX, y + 3, col2 - LabelX, 22);
-            var foodSwitch = ElementBounds.Fixed(col2, y, SwitchSize, SwitchSize);
-            var foodLabel = ElementBounds.Fixed(col2 + LabelX, y + 3, W - col2 - LabelX, 22);
-            y += Row + SmallGap;
-
-            var seedsSwitch = ElementBounds.Fixed(0, y, SwitchSize, SwitchSize);
-            var seedsLabel = ElementBounds.Fixed(LabelX, y + 3, col2 - LabelX, 22);
-            var oreSwitch = ElementBounds.Fixed(col2, y, SwitchSize, SwitchSize);
-            var oreLabel = ElementBounds.Fixed(col2 + LabelX, y + 3, W - col2 - LabelX, 22);
-            y += Row + SmallGap;
-
-            var spoilLabel = ElementBounds.Fixed(LabelX, y + 1, SliderLabelW, 22);
-            var spoilSlider = ElementBounds.Fixed(LabelX + SliderLabelW, y, W - LabelX - SliderLabelW, SliderH);
-            var spoilRow = ElementBounds.Fixed(0, y, W, SliderH);
-            y += SliderH + SmallGap;
-
-            var freshSwitch = ElementBounds.Fixed(0, y, SwitchSize, SwitchSize);
-            var freshLabel = ElementBounds.Fixed(LabelX, y + 3, W - LabelX, 22);
-            var freshRow = ElementBounds.Fixed(0, y, W, Row);
-            y += Row + GroupGap;
-
-            var mountSwitch = ElementBounds.Fixed(0, y, SwitchSize, SwitchSize);
-            var mountLabel = ElementBounds.Fixed(LabelX, y + 3, W - LabelX, 22);
-            var mountRow = ElementBounds.Fixed(0, y, W, Row);
-            y += Row + SmallGap;
-
-            var entLabel = ElementBounds.Fixed(LabelX, y + 1, SliderLabelW, 22);
-            var entSlider = ElementBounds.Fixed(LabelX + SliderLabelW, y, W - LabelX - SliderLabelW, SliderH);
-
-            SingleComposer = capi.Gui
-                .CreateCompo("symbioticinventories:options", dialogBounds)
+            c = capi.Gui.CreateCompo("symbioticinventories:options", dialogBounds)
                 .AddShadedDialogBG(bgBounds)
                 .AddDialogTitleBar(Lang.Get("symbioticinventories:options-title"), () => TryClose())
-                .BeginChildElements(bgBounds)
-                    .AddSwitch(OnToggleAdjacent, adjSwitch, "adjacentSwitch")
-                    .AddStaticText(Lang.Get("symbioticinventories:opt-adjacent"), Label(), adjLabel)
-                    .AddHoverText(Lang.Get("symbioticinventories:opt-adjacent-hint"), Label(), (int)TipW, adjRow)
-                    .AddStaticText(Lang.Get("symbioticinventories:opt-adjacent-radius"), Label(), radLabel)
-                    .AddSlider(OnRadiusChanged, radSlider, "radiusSlider")
+                .BeginChildElements(bgBounds);
 
-                    .AddStaticText(Lang.Get("symbioticinventories:opt-sort-header"), Header(), sortHeader)
-                    .AddHoverText(Lang.Get("symbioticinventories:opt-sort-hint"), Label(), (int)TipW, sortHeaderRow)
-                    .AddSwitch(v => { config.SortPrioritizeTools = v; onChanged?.Invoke(); }, toolsSwitch, "swTools")
-                    .AddStaticText(Lang.Get("symbioticinventories:cat-tools"), Label(), toolsLabel)
-                    .AddSwitch(v => { config.SortPrioritizeFood = v; onChanged?.Invoke(); }, foodSwitch, "swFood")
-                    .AddStaticText(Lang.Get("symbioticinventories:cat-food"), Label(), foodLabel)
-                    .AddSwitch(v => { config.SortPrioritizeSeeds = v; onChanged?.Invoke(); }, seedsSwitch, "swSeeds")
-                    .AddStaticText(Lang.Get("symbioticinventories:cat-seeds"), Label(), seedsLabel)
-                    .AddSwitch(v => { config.SortPrioritizeOre = v; onChanged?.Invoke(); }, oreSwitch, "swOre")
-                    .AddStaticText(Lang.Get("symbioticinventories:cat-ore"), Label(), oreLabel)
-                    .AddStaticText(Lang.Get("symbioticinventories:opt-food-spoil"), Label(), spoilLabel)
-                    .AddSlider(OnSpoilDaysChanged, spoilSlider, "spoilSlider")
-                    .AddHoverText(Lang.Get("symbioticinventories:opt-food-spoil-hint"), Label(), (int)TipW, spoilRow)
-                    .AddSwitch(v => { config.SortFoodByFreshness = v; onChanged?.Invoke(); }, freshSwitch, "swFresh")
-                    .AddStaticText(Lang.Get("symbioticinventories:opt-food-freshness"), Label(), freshLabel)
-                    .AddHoverText(Lang.Get("symbioticinventories:opt-food-freshness-hint"), Label(), (int)TipW, freshRow)
+            yc = 0;
+            SwitchRow("adjacentSwitch", "symbioticinventories:opt-adjacent", OnToggleAdjacent, "symbioticinventories:opt-adjacent-hint");
+            SliderRow("radiusSlider", "symbioticinventories:opt-adjacent-radius", OnRadiusChanged);
 
-                    .AddSwitch(OnToggleMount, mountSwitch, "mountSwitch")
-                    .AddStaticText(Lang.Get("symbioticinventories:opt-mount"), Label(), mountLabel)
-                    .AddHoverText(Lang.Get("symbioticinventories:opt-mount-hint"), Label(), (int)TipW, mountRow)
-                    .AddStaticText(Lang.Get("symbioticinventories:opt-entity-radius"), Label(), entLabel)
-                    .AddSlider(OnEntityRadiusChanged, entSlider, "entityRadSlider")
-                .EndChildElements()
-                .Compose();
+            c.AddStaticText(Lang.Get("symbioticinventories:opt-sort-header"), Header(), ElementBounds.Fixed(0, yc + 1, W, 20));
+            c.AddHoverText(Lang.Get("symbioticinventories:opt-sort-hint"), Label(), TipW, ElementBounds.Fixed(0, yc, W, 20));
+            yc += 24;
+
+            SwitchRow("swTools", "symbioticinventories:cat-tools", v => { config.SortPrioritizeTools = v; onChanged?.Invoke(); });
+            SwitchRow("swFood", "symbioticinventories:cat-food", v => { config.SortPrioritizeFood = v; onChanged?.Invoke(); });
+            SwitchRow("swSeeds", "symbioticinventories:cat-seeds", v => { config.SortPrioritizeSeeds = v; onChanged?.Invoke(); });
+            SwitchRow("swOre", "symbioticinventories:cat-ore", v => { config.SortPrioritizeOre = v; onChanged?.Invoke(); });
+            SliderRow("spoilSlider", "symbioticinventories:opt-food-spoil", OnSpoilDaysChanged, "symbioticinventories:opt-food-spoil-hint");
+            SwitchRow("swFresh", "symbioticinventories:opt-food-freshness", v => { config.SortFoodByFreshness = v; onChanged?.Invoke(); }, "symbioticinventories:opt-food-freshness-hint");
+
+            yc += GroupGap;
+            SwitchRow("mountSwitch", "symbioticinventories:opt-mount", OnToggleMount, "symbioticinventories:opt-mount-hint");
+            SliderRow("entityRadSlider", "symbioticinventories:opt-entity-radius", OnEntityRadiusChanged);
+
+            SingleComposer = c.EndChildElements().Compose();
 
             SingleComposer.GetSwitch("adjacentSwitch").On = config.OpenAdjacentChests;
             SingleComposer.GetSlider("radiusSlider").SetValues(

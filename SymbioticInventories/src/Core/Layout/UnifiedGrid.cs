@@ -52,88 +52,104 @@ namespace SymbioticInventories.Core.Layout
     }
 
     /// <summary>
-    /// The unified-flow layout: every storage section's slots pour into ONE row-major grid,
-    /// and a section is a contiguous *ribbon* of cells outlined in its accent colour - the
-    /// way a text selection spans line breaks - rather than a free-floating rectangle.
+    /// The unified layout, backward-L edition: the worn-bag block sits top-left - ONE BAG
+    /// PER LINE, block width = the biggest bag - then a one-column blank gutter, and every
+    /// off-body container (chests, vessels, boats, mounts) flows through the remaining
+    /// space: beside the bag block first, then full-width below it. Alone, the window is
+    /// exactly the bag block; a docked/narrow window degrades to bags-then-containers
+    /// stacked, because a side region needs width to be worth having.
     ///
-    /// This dissolves the packing problem instead of solving it. Rectangles of mismatched
-    /// container sizes can never tile a window without gaps or scrolling; a flow is maximally
-    /// dense *by construction* - every row is full except the last - and fluid, because the
-    /// column count is whatever fits the window. There is nothing left to search.
+    /// Within its region a section is still a contiguous *ribbon* of cells - the flow still
+    /// dissolves the packing problem; the L just gives the player's own storage a fixed,
+    /// findable home that never reflows as world containers come and go.
     /// </summary>
     public static class UnifiedGrid
     {
+        /// <summary>Minimum side-region width (columns) for the L to be worth it; below
+        /// this the off-body flow stacks under the bags instead.</summary>
+        private const int MinSideCols = 2;
+
         /// <summary>
-        /// Lays the sections' slots into a flow of the given width, in the order given.
-        /// Order is the stability story: earlier sections' ribbons are unaffected by later
-        /// ones, so bags stay put as containers open and close after them.
+        /// Lays the sections into the backward-L (or its degenerate forms), in the order
+        /// given. Order is the stability story: earlier sections' ribbons are unaffected by
+        /// later ones, so bags stay put as containers open and close after them.
         /// </summary>
         public static UnifiedPlan Compute(IReadOnlyList<InventorySection> flow, int cols)
         {
             cols = Math.Max(1, cols);
-            var plan = new UnifiedPlan { Cols = cols };
+            var plan = new UnifiedPlan();
 
-            int cell = 0;
-            bool prevOnBody = false;
+            var onBody = new List<InventorySection>();
+            var offBody = new List<InventorySection>();
             foreach (var s in flow)
+                if (s.SlotCount > 0) (IsOnBody(s.Kind) ? onBody : offBody).Add(s);
+
+            // Bag-block width: the biggest bag, capped by the window (an oversized bag wraps).
+            int bagW = 0;
+            foreach (var s in onBody) bagW = Math.Max(bagW, Math.Min(s.SlotCount, cols));
+
+            // Just the player's own storage open: the window is exactly the bag block.
+            plan.Cols = (onBody.Count > 0 && offBody.Count == 0) ? bagW : cols;
+
+            // ---- the bag block: one bag per line ----------------------------------
+            int bagRows = 0;
+            foreach (var s in onBody)
             {
                 int n = s.SlotCount;
-                if (n <= 0) continue;
+                var ribbon = new Ribbon { Section = s, StartCell = bagRows * plan.Cols };
 
-                // One line break where the worn bags end: the first off-body section starts
-                // on a fresh row, leaving the rest of the bags' last line empty. Same grid,
-                // same flow - just a visual seam between what is on you and what is not.
-                bool onBody = IsOnBody(s.Kind);
-                if (prevOnBody && !onBody && cell % cols != 0)
+                int full = n / bagW;
+                if (full > 0)
+                    ribbon.Slices.Add(new RibbonSlice { Row = bagRows, Col = 0, Cols = bagW, Rows = full, SlotOffset = 0 });
+                int tail = n - full * bagW;
+                if (tail > 0)
+                    ribbon.Slices.Add(new RibbonSlice { Row = bagRows + full, Col = 0, Cols = tail, Rows = 1, SlotOffset = full * bagW });
+
+                bagRows += (n + bagW - 1) / bagW;
+                plan.Ribbons.Add(ribbon);
+                plan.TotalCells += n;
+            }
+
+            plan.Rows = bagRows;
+            if (offBody.Count == 0) return plan;
+
+            // ---- off-body containers: beside the bags, then below (the backward L) ----
+            // The gutter column (bagW) stays blank so the two territories read apart.
+            // A window too narrow for a useful side region stacks the containers below.
+            bool lShape = onBody.Count > 0 && cols >= bagW + 1 + MinSideCols;
+            (int a, int b) Span(int r) => lShape && r < bagRows ? (bagW + 1, cols) : (0, cols);
+
+            int row = lShape || onBody.Count == 0 ? 0 : bagRows;
+            int col = Span(row).a;
+
+            foreach (var s in offBody)
+            {
+                int remaining = s.SlotCount, offset = 0;
+                var ribbon = new Ribbon { Section = s };
+
+                while (remaining > 0)
                 {
-                    cell += cols - cell % cols;
-                }
-                prevOnBody = onBody;
+                    var (a, b) = Span(row);
+                    if (col < a) col = a;
+                    if (col >= b) { row++; col = Span(row).a; continue; }
 
-                var ribbon = new Ribbon { Section = s, StartCell = cell };
+                    if (offset == 0) ribbon.StartCell = row * cols + col;
 
-                int offset = 0;
-                int remaining = n;
+                    int run = Math.Min(remaining, b - col);
+                    var last = ribbon.Slices.Count > 0 ? ribbon.Slices[^1] : null;
+                    if (last != null && last.Col == col && last.Cols == run && last.Row + last.Rows == row)
+                        last.Rows++;   // equal spans stack into one multi-row slice/element
+                    else
+                        ribbon.Slices.Add(new RibbonSlice { Row = row, Col = col, Cols = run, Rows = 1, SlotOffset = offset });
 
-                // Leading partial row: from the current column to the row's end.
-                int col = cell % cols;
-                if (col > 0)
-                {
-                    int run = Math.Min(remaining, cols - col);
-                    ribbon.Slices.Add(new RibbonSlice
-                    {
-                        Row = cell / cols, Col = col, Cols = run, Rows = 1, SlotOffset = offset
-                    });
-                    offset += run; remaining -= run; cell += run;
-                }
-
-                // Block of full rows, as ONE slice - one grid element regardless of height.
-                int fullRows = remaining / cols;
-                if (fullRows > 0)
-                {
-                    ribbon.Slices.Add(new RibbonSlice
-                    {
-                        Row = cell / cols, Col = 0, Cols = cols, Rows = fullRows, SlotOffset = offset
-                    });
-                    int c = fullRows * cols;
-                    offset += c; remaining -= c; cell += c;
-                }
-
-                // Trailing partial row.
-                if (remaining > 0)
-                {
-                    ribbon.Slices.Add(new RibbonSlice
-                    {
-                        Row = cell / cols, Col = 0, Cols = remaining, Rows = 1, SlotOffset = offset
-                    });
-                    cell += remaining;
+                    offset += run; remaining -= run; col += run;
+                    plan.Rows = Math.Max(plan.Rows, row + 1);
                 }
 
                 plan.Ribbons.Add(ribbon);
+                plan.TotalCells += s.SlotCount;
             }
 
-            plan.TotalCells = cell;
-            plan.Rows = (int)Math.Ceiling(cell / (double)cols);
             return plan;
         }
 
@@ -165,6 +181,25 @@ namespace SymbioticInventories.Core.Layout
             int colsForFit = (int)Math.Ceiling(totalSlots / (double)rowsScreen);
 
             return Math.Clamp(Math.Max(target, colsForFit), minCols, colsScreen);
+        }
+
+        /// <summary>
+        /// Widens the column count so the backward-L has a usable side region beside the
+        /// bag block: gutter + at least 8 columns, screen width permitting. Without this a
+        /// small load (one basket) picks few columns and the L degenerates to a stack even
+        /// on a wide screen. No-op when there is nothing to put beside the bags.
+        /// </summary>
+        public static int EnsureSideRoom(int cols, IReadOnlyList<InventorySection> flow, int colsScreen)
+        {
+            int bagW = 0; bool off = false;
+            foreach (var s in flow)
+            {
+                if (s.SlotCount <= 0) continue;
+                if (IsOnBody(s.Kind)) bagW = Math.Max(bagW, s.SlotCount);
+                else off = true;
+            }
+            if (bagW == 0 || !off) return cols;
+            return Math.Min(Math.Max(cols, bagW + 1 + 8), Math.Max(cols, colsScreen));
         }
     }
 }

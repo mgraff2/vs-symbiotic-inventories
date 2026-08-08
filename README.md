@@ -11,12 +11,13 @@ for screen space.
 
 ## What it does
 
-- **One combined grid.** Every open container's slots flow into a single row-major grid. Each
-  container is a contiguous **ribbon** of coloured cells — the cell backgrounds are tinted in
-  the container's colour, the way a text selection spans line breaks — so you always know which
-  chest a slot belongs to.
-- **The window is always inventory-shaped.** The grid fills your screen's width (landscape) and
-  reflows to whatever's open, so it stays dense with no wasted space and rarely needs to scroll.
+- **One combined grid, backward-L shaped.** Your worn bags sit top-left as a fixed block —
+  one bag per line, block width = your biggest bag — then a blank gutter column, and every
+  open container flows through the rest: beside your bags first, then full-width below. Each
+  container is a contiguous **ribbon** of coloured cells, so you always know which chest a
+  slot belongs to, and your own storage has a home that never moves as containers come and go.
+- **Alone, the window is just your bags** (e.g. a clean 4×8 for four sturdy backpacks). With
+  containers open it widens to fill the landscape, dense with no wasted space.
 - **Crafting grid is always present**, top-left, with its output slot. Anything left in it
   returns to your inventory when you close the window.
 - **A vessel row** across the top: one icon tile per open container, badge-numbered to match its

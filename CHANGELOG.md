@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Backward-L layout.** Worn bags are a fixed block top-left - one bag per line, block width
+  = your biggest bag - then a blank gutter column; open containers flow beside the block and
+  wrap full-width below it. With nothing else open the window is just the bag block (4×8 for
+  four sturdy backpacks). Docked/narrow windows stack containers below instead. Supersedes
+  the on-body/off-body line break.
 - **Fixed** the cellar sweep withdrawing goods from click-to-take containers (FoodShelves
   flour sacks). Auto-open now only right-clicks containers that structurally promise a
   dialog (`BlockEntityOpenableContainer`); shelf-family blocks are left alone.

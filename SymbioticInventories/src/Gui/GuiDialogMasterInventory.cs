@@ -381,6 +381,10 @@ namespace SymbioticInventories.Gui
             int cols = docked
                 ? Math.Max(4, (int)(availW / LayoutMetrics.Cell))
                 : UnifiedGrid.ChooseCols(frameSlots, availW, availH - craftingH - Pad * 2);
+            // Floating with containers open: guarantee the backward-L a real side region
+            // beside the bag block. Docked stays width-driven and stacks instead.
+            if (!docked)
+                cols = UnifiedGrid.EnsureSideRoom(cols, flowSections, (int)(availW / LayoutMetrics.Cell));
             plan = UnifiedGrid.Compute(flowSections, cols);
             double flowW = plan.Cols * LayoutMetrics.Cell;
 
@@ -419,7 +423,10 @@ namespace SymbioticInventories.Gui
             double stripH = Math.Max(craftingH, Math.Max(bagSlots != null ? LayoutMetrics.Cell : 0, iconRows * (IconTile + 4))) + Pad;
 
             contentH = plan.Rows * LayoutMetrics.Cell;
-            double frameH = Math.Ceiling(frameSlots / (double)Math.Max(cols, 1)) * LayoutMetrics.Cell;
+            // Frame height = the plan for ALL numbered sections (hidden ones included), so
+            // filter toggles reflow inside a stable window. Computed by the same layout, not
+            // by slot arithmetic - the L's gutter and per-bag lines make ceil(n/cols) wrong.
+            double frameH = UnifiedGrid.Compute(numberedSections, cols).Rows * LayoutMetrics.Cell;
             // Everything sits below the title bar. Content used to start at Y=0, the same row
             // the title bar draws in, so the crafting grid and vessel tiles covered up
             // "Symbiotic Inventories" (user screenshot).
@@ -783,40 +790,17 @@ namespace SymbioticInventories.Gui
             {
                 var s = ribbon.Section;
                 var a = s.Accent;
+                if (ribbon.Slices.Count == 0) continue;
 
-                int W = plan.Cols;
-                int start = ribbon.StartCell, end = ribbon.EndCell - 1;
-                int r0 = start / W, c0 = start % W;
-                int r1 = end / W, c1 = end % W + 1;
-
-                // Fill + outline. Contiguous multi-row ribbons trace the text-selection
-                // polygon; the two-partial-rows-no-overlap case falls back to per-slice
-                // rectangles (the polygon would self-intersect).
-                bool polygon = r1 > r0 && (r1 - r0 >= 2 || c1 > c0);
-
+                // Per-slice rectangles. The backward-L puts ribbons in sub-regions (beside
+                // the bag block, then below it), so the old full-width text-selection
+                // polygon no longer describes a ribbon's outline; each slice is an exact
+                // rectangle by construction, and a shared internal edge just reads as a
+                // seam in the same colour.
                 void Trace()
                 {
-                    if (r0 == r1)
-                    {
-                        ctx.Rectangle(c0 * cell, oy + r0 * cell, (c1 - c0) * cell, cell);
-                    }
-                    else if (polygon)
-                    {
-                        ctx.MoveTo(c0 * cell, oy + r0 * cell);
-                        ctx.LineTo(W * cell, oy + r0 * cell);
-                        ctx.LineTo(W * cell, oy + r1 * cell);
-                        ctx.LineTo(c1 * cell, oy + r1 * cell);
-                        ctx.LineTo(c1 * cell, oy + (r1 + 1) * cell);
-                        ctx.LineTo(0, oy + (r1 + 1) * cell);
-                        ctx.LineTo(0, oy + (r0 + 1) * cell);
-                        ctx.LineTo(c0 * cell, oy + (r0 + 1) * cell);
-                        ctx.ClosePath();
-                    }
-                    else
-                    {
-                        ctx.Rectangle(c0 * cell, oy + r0 * cell, (W - c0) * cell, cell);
-                        ctx.Rectangle(0, oy + r1 * cell, c1 * cell, cell);
-                    }
+                    foreach (var sl in ribbon.Slices)
+                        ctx.Rectangle(sl.Col * cell, oy + sl.Row * cell, sl.Cols * cell, sl.Rows * cell);
                 }
 
                 // Strong enough that every cell visibly carries its container's colour (the
@@ -830,7 +814,8 @@ namespace SymbioticInventories.Gui
                 Trace();
                 ctx.Stroke();
 
-                DrawBadge(ctx, c0 * cell + 2 * g, oy + r0 * cell + 2 * g, 14 * g, s.Number, a);
+                var f = ribbon.Slices[0];
+                DrawBadge(ctx, f.Col * cell + 2 * g, oy + f.Row * cell + 2 * g, 14 * g, s.Number, a);
             }
         }
 

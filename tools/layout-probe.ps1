@@ -7,17 +7,20 @@
     contiguous ribbon of cells (like a text selection). That math is pure computation, so it
     is tested without launching the client. Invariants:
 
-      * ribbons are contiguous: each starts exactly where the previous ended, EXCEPT at
-        the one deliberate line break - the first off-body section (chest/vehicle/mount)
-        starts on a fresh row, leaving the tail of the worn bags' last row empty
-      * every ribbon's slices cover its slot count exactly, in order, with correct offsets
-      * at most three slices per ribbon (lead partial, full-rows block, tail partial)
-      * no slice exceeds the grid width; slice geometry matches its cell run
-      * total rows = ceil(cells consumed / cols), where cells include the break's skip
+    The layout is a backward-L: the worn-bag block sits top-left (ONE BAG PER LINE, block
+    width = the biggest bag), a one-column blank gutter, and off-body containers flow
+    beside the block then full-width below it. Bags alone = just the bag block; a narrow
+    (docked) window stacks containers below instead. Invariants:
 
-    Prints an ASCII map per scenario - with a flow layout the map should read as solid
-    lines of glyphs with no holes anywhere except the on-body/off-body seam and after
-    the final cell.
+      * no two slices overlap, and none leaves the grid
+      * every ribbon's slices cover its slot count exactly, in order, with correct offsets
+      * every bag starts at column 0 on its own line - no row hosts two bags
+      * when containers share a bag row, the gutter column right of the bag block is empty
+      * bags alone: plan.Cols is exactly the bag-block width
+      * the bottom row is never empty; TotalCells equals the slots placed
+
+    Prints an ASCII map per scenario. READ THE MAPS: region-stream continuity of the
+    off-body flow is asserted per-ribbon but its overall shape (the L) is judged by eye.
 
 .EXAMPLE
     .\tools\layout-probe.ps1
@@ -71,6 +74,13 @@ function New-SectionList($sections) {
 # Flow sections only - crafting and worn-bag slots live in the fixed top strip now.
 $scenarios = @{
     'minimal' = @()
+    # Bags only - the window must be exactly the 4x8 bag block, one bag per line.
+    'solo' = @(
+        (New-Section 'Sturdy 1' 'Backpack' 8 1),
+        (New-Section 'Sturdy 2' 'Backpack' 8 2),
+        (New-Section 'Sturdy 3' 'Backpack' 8 3),
+        (New-Section 'Sturdy 4' 'Backpack' 8 4)
+    )
     'typical' = @(
         (New-Section 'Hunter bag'  'Backpack'       16 1),
         (New-Section 'Leather bag' 'Backpack'       16 2),
@@ -113,64 +123,93 @@ $scenarios = @{
 
 $failures = @()
 
-# On-body kinds flow first; the first off-body ribbon starts on a fresh row (the line break).
 $onBodyKinds = @('Crafting', 'Hotbar', 'BackpackSlots', 'Backpack')
 
 function Test-Plan($name, $plan) {
-    $expectedStart = 0
-    $prevOnBody = $false
+    $W = $plan.Cols
+    $H = $plan.Rows
+    if ($plan.Ribbons.Count -eq 0) { return }
+    if ($W -le 0 -or $H -le 0) { $script:failures += "$name : empty grid ($W x $H) with ribbons"; return }
+
+    $map = @{}          # "row,col" -> ribbon index
+    $bagRowOwner = @{}  # row -> on-body ribbon index (one bag per line)
+    $bagRight = -1      # rightmost bag column = bag block width - 1
+    $anyOffBody = $false
+    $slotSum = 0
+    $ri = 0
 
     foreach ($ribbon in $plan.Ribbons) {
         $slots = $ribbon.Section.SlotIds.Length
         $label = $ribbon.Section.Label
-
-        # Mirror the one legal discontinuity: on-body -> off-body rounds up to a row start.
         $onBody = $onBodyKinds -contains $ribbon.Section.Kind.ToString()
-        if ($prevOnBody -and -not $onBody -and ($expectedStart % $plan.Cols) -ne 0) {
-            $expectedStart += $plan.Cols - ($expectedStart % $plan.Cols)
-        }
-        $prevOnBody = $onBody
+        if (-not $onBody) { $anyOffBody = $true }
+        $slotSum += $slots
 
-        if ($ribbon.StartCell -ne $expectedStart) {
-            $script:failures += "$name : '$label' starts at cell $($ribbon.StartCell), expected $expectedStart - flow has a gap or overlap"
-        }
-        $expectedStart = $ribbon.StartCell + $slots
-
-        if ($ribbon.Slices.Count -gt 3) {
-            $script:failures += "$name : '$label' has $($ribbon.Slices.Count) slices (max 3)"
-        }
-
-        $cell = $ribbon.StartCell
         $offset = 0
         foreach ($slice in $ribbon.Slices) {
             if ($slice.SlotOffset -ne $offset) {
                 $script:failures += "$name : '$label' slice offset $($slice.SlotOffset), expected $offset"
             }
-            $sliceStart = $slice.Row * $plan.Cols + $slice.Col
-            if ($sliceStart -ne $cell) {
-                $script:failures += "$name : '$label' slice at cell $sliceStart, expected $cell - ribbon not contiguous"
-            }
-            if ($slice.Col + $slice.Cols -gt $plan.Cols) {
+            $offset += $slice.Cols * $slice.Rows
+            if ($slice.Col -lt 0 -or $slice.Col + $slice.Cols -gt $W) {
                 $script:failures += "$name : '$label' slice exceeds grid width"
             }
-            if ($slice.Rows -gt 1 -and ($slice.Col -ne 0 -or $slice.Cols -ne $plan.Cols)) {
-                $script:failures += "$name : '$label' multi-row slice is not a full-width block"
+            if ($slice.Row -lt 0 -or $slice.Row + $slice.Rows -gt $H) {
+                $script:failures += "$name : '$label' slice exceeds grid height"
             }
-            $offset += $slice.Count
-            $cell += $slice.Count
+            if ($onBody -and $slice.Col -ne 0) {
+                $script:failures += "$name : bag '$label' slice starts at column $($slice.Col), bags own their lines from column 0"
+            }
+
+            for ($r = $slice.Row; $r -lt $slice.Row + $slice.Rows; $r++) {
+                for ($c = $slice.Col; $c -lt $slice.Col + $slice.Cols; $c++) {
+                    $k = "$r,$c"
+                    if ($map.ContainsKey($k)) {
+                        $script:failures += "$name : overlap at ($r,$c) between '$label' and ribbon $($map[$k])"
+                    }
+                    $map[$k] = $ri
+                    if ($onBody) {
+                        if ($bagRowOwner.ContainsKey($r) -and $bagRowOwner[$r] -ne $ri) {
+                            $script:failures += "$name : row $r hosts two bags - each bag gets its own line"
+                        }
+                        $bagRowOwner[$r] = $ri
+                        if ($c -gt $bagRight) { $bagRight = $c }
+                    }
+                }
+            }
         }
         if ($offset -ne $slots) {
             $script:failures += "$name : '$label' slices cover $offset of $slots slots"
         }
+        $ri++
     }
 
-    # expectedStart has walked every ribbon plus the break skip: it IS the cells consumed.
-    if ($plan.TotalCells -ne $expectedStart) {
-        $script:failures += "$name : plan.TotalCells=$($plan.TotalCells), walk says $expectedStart"
+    if ($plan.TotalCells -ne $slotSum) {
+        $script:failures += "$name : TotalCells=$($plan.TotalCells), slots sum to $slotSum"
     }
-    $expectRows = if ($expectedStart -eq 0) { 0 } else { [math]::Ceiling($expectedStart / [double]$plan.Cols) }
-    if ($plan.Rows -ne $expectRows) {
-        $script:failures += "$name : plan.Rows=$($plan.Rows), expected $expectRows"
+
+    # Bags alone: the window IS the bag block.
+    if (-not $anyOffBody -and $bagRight -ge 0 -and $W -ne $bagRight + 1) {
+        $script:failures += "$name : bags-only plan is $W cols, bag block is $($bagRight + 1)"
+    }
+
+    # Gutter: any bag row that also hosts container cells keeps the column right of the
+    # bag block empty, so the two territories read apart.
+    if ($anyOffBody -and $bagRight -ge 0 -and $bagRight + 1 -lt $W) {
+        foreach ($r in $bagRowOwner.Keys) {
+            $rowHasOff = $false
+            for ($c = $bagRight + 1; $c -lt $W; $c++) { if ($map.ContainsKey("$r,$c")) { $rowHasOff = $true; break } }
+            if ($rowHasOff -and $map.ContainsKey("$r,$($bagRight + 1)")) {
+                $script:failures += "$name : row $r has no blank gutter between the bag block and containers"
+            }
+        }
+    }
+
+    # Rows minimal: the bottom row carries at least one cell.
+    $bottomUsed = $false
+    for ($c = 0; $c -lt $W; $c++) { if ($map.ContainsKey("$($H - 1),$c")) { $bottomUsed = $true; break } }
+    if (-not $bottomUsed) {
+        $script:failures += "$name : bottom row $($H - 1) is empty - Rows overstated"
     }
 }
 
@@ -184,7 +223,13 @@ function Show-Map($plan) {
     $gi = 0
     foreach ($ribbon in $plan.Ribbons) {
         $g = $glyphs[$gi % $glyphs.Length]; $gi++
-        for ($c = $ribbon.StartCell; $c -lt $ribbon.EndCell; $c++) { $cells[$c] = $g }
+        foreach ($slice in $ribbon.Slices) {
+            for ($r = $slice.Row; $r -lt $slice.Row + $slice.Rows; $r++) {
+                for ($c = $slice.Col; $c -lt $slice.Col + $slice.Cols; $c++) {
+                    $cells[$r * $plan.Cols + $c] = $g
+                }
+            }
+        }
     }
     for ($r = 0; $r -lt $plan.Rows; $r++) {
         $rowChars = $cells[($r * $plan.Cols)..(($r + 1) * $plan.Cols - 1)]
@@ -222,11 +267,15 @@ foreach ($scr in @(@(1920, 1080), @(2560, 1440), @(1600, 900))) {
 }
 Write-Host ""
 
-foreach ($scenarioName in @('minimal', 'typical', 'boat', 'warehouse', 'heavy')) {
+$ensure = $TGrid.GetMethod('EnsureSideRoom')
+
+foreach ($scenarioName in @('minimal', 'solo', 'typical', 'boat', 'warehouse', 'heavy')) {
     foreach ($cols in @(24, 8)) {
         $modeName = if ($cols -eq 8) { 'DockLeft' } else { 'Auto' }
         $list = New-SectionList $scenarios[$scenarioName]
-        $plan = $compute.Invoke($null, @($list, $cols))
+        # Auto widens for the backward-L exactly as the GUI does; docked stays width-driven.
+        $useCols = if ($modeName -eq 'Auto') { $ensure.Invoke($null, @([int]$cols, $list, [int]34)) } else { $cols }
+        $plan = $compute.Invoke($null, @($list, [int]$useCols))
 
         $label = "$scenarioName/$modeName"
         Test-Plan $label $plan
@@ -239,7 +288,7 @@ foreach ($scenarioName in @('minimal', 'typical', 'boat', 'warehouse', 'heavy'))
 
 Write-Host ""
 if ($failures.Count -eq 0) {
-    Write-Host "LAYOUT PROBE PASSED - ribbons contiguous, slices exact, rows minimal" -ForegroundColor Green
+    Write-Host "LAYOUT PROBE PASSED - no overlaps, bags own their lines, gutter blank, rows minimal" -ForegroundColor Green
     exit 0
 }
 Write-Host "LAYOUT PROBE FAILED ($($failures.Count)):" -ForegroundColor Red

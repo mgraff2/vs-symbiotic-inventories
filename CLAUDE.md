@@ -44,13 +44,16 @@ The rectangle-packing era (shelf DP, skyline jigsaw, uniform tiles, L-shapes) is
 of real screenshots proved mismatched container sizes can never tile a window without holes
 or scrolling. The user proposed the design that replaced it, and it dissolves the problem:
 
-- **One combined grid.** Every storage section's slots pour into a single row-major flow
-  (`UnifiedGrid.Compute`). A section is a contiguous **ribbon** of cells - outlined and
-  tinted in its accent colour the way a text selection spans line breaks - split into at
-  most three slot-grid slices (lead partial row, full-rows block, tail partial row).
-- **Maximally dense by construction**: every row is full except the last. Column count is
-  arithmetic (`ChooseCols`: enough columns that the rows fit the height, capped by window
-  width) - no candidate search, nothing to score.
+- **One combined grid, backward-L shaped** (`UnifiedGrid.Compute`). The worn-bag block sits
+  top-left - ONE BAG PER LINE, block width = the biggest bag - then a one-column blank
+  gutter, and off-body sections flow beside the block, then full-width below it. A section
+  is a contiguous **ribbon** of cells within its region, tinted in its accent colour; slices
+  are exact rectangles (the chrome draws per-slice - the old full-width selection polygon
+  died with the plain flow). Bags alone → the window IS the bag block. Too narrow for a
+  side region (docked) → containers stack below instead.
+- **Column count is arithmetic**: `ChooseCols` aspect-fills the landscape, then
+  `EnsureSideRoom` widens so the L has gutter + ≥8 side columns when containers are open.
+  No candidate search, nothing to score.
 - **Top strip, never scrolls**: crafting grid, worn-bag slots, and the vessel row - one
   passive icon tile per open storage (bag itemstack / container block), badge-numbered to
   match its ribbon and the legend rail.

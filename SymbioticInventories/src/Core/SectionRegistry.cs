@@ -128,6 +128,7 @@ namespace SymbioticInventories.Core
                     Accent = SectionPalette.ForNumber(n),
                     Inventory = inv,
                     SlotIds = byBag[bagIndex].ToArray(),
+                    Icon = BagStack(inv, bagIndex),
                     SendPacket = SendPlayerPacket
                 });
             }
@@ -136,20 +137,22 @@ namespace SymbioticInventories.Core
         /// <summary>Reads the bag's own item name so the label matches what the player is wearing.</summary>
         private string BagName(IInventory inv, int bagIndex)
         {
+            var stack = BagStack(inv, bagIndex);
+            return stack?.GetName() ?? Lang.Get("symbioticinventories:section-backpack-n", bagIndex + 1);
+        }
+
+        /// <summary>The n-th worn bag's own itemstack, for the vessel row.</summary>
+        private ItemStack BagStack(IInventory inv, int bagIndex)
+        {
             int seen = 0;
             for (int i = 0; i < inv.Count; i++)
             {
                 if (inv[i] is ItemSlotBackpack)
                 {
-                    if (seen++ == bagIndex)
-                    {
-                        var stack = inv[i].Itemstack;
-                        if (stack != null) return stack.GetName();
-                        break;
-                    }
+                    if (seen++ == bagIndex) return inv[i].Itemstack;
                 }
             }
-            return Lang.Get("symbioticinventories:section-backpack-n", bagIndex + 1);
+            return null;
         }
 
         // ---- captured containers -------------------------------------------------
@@ -171,6 +174,7 @@ namespace SymbioticInventories.Core
                     Accent = SectionPalette.ForNumber(n),
                     Inventory = cap.Inventory,
                     SlotIds = Enumerable.Range(0, cap.Inventory.Count).ToArray(),
+                    Icon = CapturedIcon(cap),
                     SendPacket = cap.SendPacket
                 });
             }
@@ -192,6 +196,14 @@ namespace SymbioticInventories.Core
             if (seatable && !ridable) return SectionKind.Vehicle; // boats, carts, rafts
             if (ridable) return SectionKind.Mount;                // elk, horses, pack animals
             return SectionKind.Mount;
+        }
+
+        /// <summary>Block containers show their own block in the vessel row; entity ones have none.</summary>
+        private ItemStack CapturedIcon(CapturedDialog cap)
+        {
+            if (cap.BlockPosition == null) return null;
+            var block = capi.World.BlockAccessor.GetBlock(cap.BlockPosition);
+            return block == null || block.Id == 0 ? null : new ItemStack(block);
         }
 
         private string DescribeWhere(CapturedDialog cap)

@@ -10,62 +10,70 @@ using Vintagestory.API.Config;
 namespace SymbioticInventories.Gui
 {
     /// <summary>
-    /// The single window. Sections are measured and placed by <see cref="SectionPacker"/>;
-    /// this class only turns a finished <see cref="LayoutPlan"/> into GUI elements.
+    /// The single window, unified-flow edition.
     ///
-    /// Keeping placement out of here is what makes the two modes cheap: the centered window
-    /// and the left dock are different budgets handed to the same packer, not two parallel
-    /// implementations of the same window.
+    /// Top strip (never scrolls): crafting grid, worn-bag slots, and the vessel row - one
+    /// icon tile per open storage, badge-numbered. Below it, ONE combined slot grid: every
+    /// storage section's slots pour into a row-major flow, and each section is a contiguous
+    /// coloured *ribbon* outlined the way a text selection spans line breaks. The badge on a
+    /// vessel tile matches the badge at its ribbon's first cell.
+    ///
+    /// This replaced a rectangle-packing design after a run of screenshots showed mismatched
+    /// container sizes can never tile a window cleanly: rectangles always left holes or
+    /// forced a scrollbar. A flow is maximally dense by construction - every row full except
+    /// the last - and fluid: the column count is arithmetic from the window size, not a
+    /// candidate search.
     ///
     /// Docked behaviour: the window stays on screen like a HUD element - the mouse stays
-    /// grabbed and gameplay continues around it. Pressing the focus hotkey flips it into a
-    /// normal interactive dialog (cursor freed, clicks land); pressing it again, or closing,
-    /// returns it to passive HUD mode. That flip is what "locked in place" means mechanically:
-    /// the window never moves, only the player's ability to reach into it changes.
+    /// grabbed and gameplay continues around it. The focus hotkey flips it into a normal
+    /// interactive dialog; pressing it again, or closing, returns it to passive HUD mode.
     /// </summary>
     public class GuiDialogMasterInventory : GuiDialog
     {
         public const string HotkeyCode = "symbioticinventory";
         public const string FocusHotkeyCode = "symbioticinventoryfocus";
 
+        private const string ChromeKey = "chrome";
+        private const string ScrollKey = "scrollbar";
+
         private const double RailW = 200;
         private const double Pad = 10;
         private const double FooterH = 30;
 
+        /// <summary>Vessel-row tiles are 2/3 slot size: recognisable, but clearly not slots.</summary>
+        private const double IconTile = 36;
+
         private readonly SectionRegistry registry;
 
         private List<InventorySection> sections = new();
-        private LayoutPlan plan = new();
+        private readonly List<InventorySection> flowSections = new();
+        private UnifiedPlan plan = new();
 
         private LayoutMode mode = LayoutMode.Auto;
-
-        /// <summary>Docked only: whether the player currently has the cursor in the window.</summary>
         private bool dockFocused;
 
         /// <summary>Opens the options dialog. Wired by the mod system.</summary>
         public Action OpenOptions;
 
-        private const string ChromeKey = "chrome";
-        private const string ScrollKey = "scrollbar";
-
-        /// <summary>
-        /// Grid bounds paired with their unscrolled Y, so scrolling can move them without a
-        /// recompose. Recomposing inside the scrollbar's own callback would destroy the
-        /// element being dragged and drop the drag on the first pixel of movement.
-        /// </summary>
-        private readonly List<(ElementBounds bounds, double baseY)> scrollables = new();
+        /// <summary>Grid bounds paired with their viewport-relative Y, for scrolling without recompose.</summary>
+        private readonly List<(ElementBounds bounds, double relY)> scrollables = new();
 
         private double scrollY;
         private double viewportH;
         private double contentH;
 
-        /// <summary>Plan-space Y at which the pinned region ends and scrolling begins.</summary>
+        /// <summary>Dialog-space Y where the scrolling flow begins (below the top strip).</summary>
         private double scrollStart;
 
-        /// <summary>
-        /// Inventories whose SlotModified we are subscribed to, with the handler that was
-        /// attached, so every compose can cleanly unsubscribe before resubscribing.
-        /// </summary>
+        /// <summary>Dialog-space X of the flow grid's left edge.</summary>
+        private double contentX;
+
+        /// <summary>Where each vessel tile was placed, for badge overdraw. (x, y) dialog-space.</summary>
+        private readonly List<(double x, double y, InventorySection s)> iconTiles = new();
+
+        /// <summary>Backing inventory for the vessel row's passive tiles.</summary>
+        private readonly List<DummySlot> iconSlots = new();
+
         private readonly List<(IInventory inv, Action<int> handler)> watched = new();
 
         public GuiDialogMasterInventory(ICoreClientAPI capi, SectionRegistry registry) : base(capi)
@@ -75,22 +83,14 @@ namespace SymbioticInventories.Gui
 
         public override string ToggleKeyCombinationCode => HotkeyCode;
 
-        /// <summary>
-        /// Centered mode behaves like the vanilla inventory screen: cursor free. Docked mode
-        /// only frees the cursor while focused - otherwise the game keeps the mouse and the
-        /// window is just a live display at the edge of the screen.
-        /// </summary>
         public override bool PrefersUngrabbedMouse => mode != LayoutMode.DockLeft || dockFocused;
 
-        /// <summary>An unfocused dock is a HUD: drawn, but not part of the dialog stack.</summary>
         public override EnumDialogType DialogType
             => mode == LayoutMode.DockLeft && !dockFocused ? EnumDialogType.HUD : EnumDialogType.Dialog;
 
-        /// <summary>An unfocused dock must never swallow clicks meant for the world.</summary>
         public override bool ShouldReceiveMouseEvents()
             => (mode != LayoutMode.DockLeft || dockFocused) && base.ShouldReceiveMouseEvents();
 
-        /// <summary>Toggles cursor access to the docked window. Bound to the focus hotkey.</summary>
         public bool ToggleDockFocus()
         {
             if (mode != LayoutMode.DockLeft || !IsOpened()) return false;
@@ -102,8 +102,6 @@ namespace SymbioticInventories.Gui
         public override void OnGuiOpened()
         {
             base.OnGuiOpened();
-            // Opening always grants the cursor, whatever triggered it: the player either asked
-            // for the window or just opened a container, and both mean "let me reach in now".
             dockFocused = true;
             Compose();
         }
@@ -115,209 +113,168 @@ namespace SymbioticInventories.Gui
             UnwatchInventories();
         }
 
-        // ---- inventory shape watching -------------------------------------------
-        //
-        // The slot grids are composed against a snapshot of each inventory's slot ids, and
-        // the backpack inventory's slot count CHANGES at runtime: picking a worn bag out of
-        // its slot removes that bag's content slots from the inventory. A grid still holding
-        // the old ids then recomposes lazily during render and dies on a vanished slot
-        // (NullReferenceException in GuiElementItemSlotGridBase.ComposeSlotOverlays - found
-        // by a real crash, clicking a worn bag in a ~60-mod game).
-        //
-        // The fix is the same thing vanilla's own inventory dialog does: watch SlotModified
-        // and recompose the moment the inventory's shape no longer matches what was composed.
-        // Recomposing immediately - not on the next tick - is the point: the stale grid must
-        // never reach another render frame.
-
-        private void WatchInventories()
-        {
-            UnwatchInventories();
-
-            var seen = new HashSet<IInventory>();
-            foreach (var s in sections)
-            {
-                var inv = s.Inventory;
-                if (inv == null || !seen.Add(inv)) continue;   // sections share inventories
-
-                int countAtCompose = inv.Count;
-                Action<int> handler = slotId =>
-                {
-                    if (inv.Count != countAtCompose || slotId >= countAtCompose) Refresh();
-                };
-                inv.SlotModified += handler;
-                watched.Add((inv, handler));
-            }
-        }
-
-        private void UnwatchInventories()
-        {
-            foreach (var (inv, handler) in watched) inv.SlotModified -= handler;
-            watched.Clear();
-        }
-
-        /// <summary>Called when a container docks or undocks while the window is already up.</summary>
         public void Refresh()
         {
             if (!IsOpened()) return;
             Compose();
         }
 
-        // ---- budget -------------------------------------------------------------
-
-        /// <summary>
-        /// How much room the layout may use, in unscaled GUI units.
-        ///
-        /// Measuring the real framebuffer rather than assuming a size is the whole reason the
-        /// window stopped running off the screen: at a high GUI scale the usable area in
-        /// unscaled units shrinks, and a layout that fits at 1x will not fit at 1.5x.
-        /// </summary>
-        private LayoutBudget BuildBudget()
-        {
-            double scale = Math.Max(0.1, RuntimeEnv.GUIScale);
-            double screenW = capi.Render.FrameWidth / scale;
-            double screenH = capi.Render.FrameHeight / scale;
-
-            var budget = new LayoutBudget { Mode = mode };
-
-            // Chrome that is not available to sections: title bar, footer, padding, and the
-            // legend rail where one is shown.
-            double chromeH = 40 + FooterH + Pad * 3;
-
-            if (mode == LayoutMode.DockLeft)
-            {
-                // Locked to the edge: a narrow column that runs the full height. The packers
-                // wrap early against the narrow width and fill downward, which is exactly the
-                // docked behaviour, so no special-casing is needed here.
-                budget.MaxWidth = Math.Min(screenW * 0.28, 8 * LayoutMetrics.Cell);
-                budget.MaxHeight = screenH - chromeH;
-            }
-            else
-            {
-                // Full screen availability; Compose narrows this via width caps. The cap
-                // logic lives there because "how wide" depends on what is open right now.
-                budget.MaxWidth = Math.Max(4 * LayoutMetrics.Cell, screenW * 0.82 - RailW - Pad * 3);
-                // 0.92: every unit of height budget is a unit the warehouse case does not
-                // have to scroll. The dialog may overlap the vanilla hotbar HUD's row, which
-                // is fine - the mouse is free while the window is open.
-                budget.MaxHeight = screenH * 0.92 - chromeH;
-            }
-
-            return budget;
-        }
-
-        private bool ShowRail => mode != LayoutMode.DockLeft;
-
         // ---- composition --------------------------------------------------------
 
         private void Compose()
         {
             sections = registry.Build();
-            var budget = BuildBudget();
-            plan = PackBestWidth(budget);
+            flowSections.Clear();
+            foreach (var s in sections) if (s.Number > 0) flowSections.Add(s);
 
             scrollables.Clear();
+            iconTiles.Clear();
+            iconSlots.Clear();
 
-            // Where the scrolling region begins. Everything above it is pinned and always
-            // visible - that is the whole point of the essentials band.
-            scrollStart = plan.Height;
-            foreach (var band in plan.Bands)
-            {
-                if (!band.Pinned && band.Boxes.Count > 0) scrollStart = Math.Min(scrollStart, band.Y);
-            }
-            if (scrollStart >= plan.Height) scrollStart = plan.Height;
+            double scale = Math.Max(0.1, RuntimeEnv.GUIScale);
+            double screenW = capi.Render.FrameWidth / scale;
+            double screenH = capi.Render.FrameHeight / scale;
 
-            contentH = Math.Max(plan.Height - scrollStart, 0);
-            viewportH = Math.Min(contentH, Math.Max(budget.MaxHeight - scrollStart, 2 * LayoutMetrics.Cell));
+            bool docked = mode == LayoutMode.DockLeft;
+            bool showRail = !docked;
+
+            double railW = showRail ? RailW + Pad : 0;
+            double chromeH = 40 + FooterH + Pad * 3;
+            double availW = docked
+                ? Math.Min(screenW * 0.28, 10 * LayoutMetrics.Cell)
+                : Math.Max(8 * LayoutMetrics.Cell, screenW * 0.92 - railW - Pad * 2);
+            double availH = screenH * 0.92 - chromeH;
+
+            // ---- top strip: crafting + worn bags + vessel row -------------------
+            var crafting = sections.Find(s => s.Kind == SectionKind.Crafting);
+            var bagSlots = sections.Find(s => s.Kind == SectionKind.BackpackSlots);
+
+            int totalSlots = 0;
+            foreach (var s in flowSections) totalSlots += s.SlotCount;
+
+            double craftingW = crafting != null ? crafting.FixedColumns * LayoutMetrics.Cell + Pad : 0;
+            double bagsW = bagSlots != null ? bagSlots.SlotCount * LayoutMetrics.Cell + Pad : 0;
+            double craftingH = crafting != null
+                ? Math.Ceiling(crafting.SlotCount / (double)crafting.FixedColumns) * LayoutMetrics.Cell
+                : 0;
+
+            // Vessel tiles wrap within whatever width remains beside crafting and bags.
+            double iconAreaX = craftingW + bagsW;
+            double iconAreaW = Math.Max(IconTile, availW - iconAreaX);
+            int iconsPerRow = Math.Max(1, (int)(iconAreaW / (IconTile + 4)));
+            int iconRows = flowSections.Count == 0 ? 0 : (int)Math.Ceiling(flowSections.Count / (double)iconsPerRow);
+
+            double stripH = Math.Max(craftingH, Math.Max(bagSlots != null ? LayoutMetrics.Cell : 0, iconRows * (IconTile + 4))) + Pad;
+
+            // ---- the flow -------------------------------------------------------
+            int cols = docked
+                ? Math.Max(4, (int)(availW / LayoutMetrics.Cell))
+                : UnifiedGrid.ChooseCols(totalSlots, availW, availH - stripH);
+            plan = UnifiedGrid.Compute(flowSections, cols);
+
+            double flowW = plan.Cols * LayoutMetrics.Cell;
+            contentH = plan.Rows * LayoutMetrics.Cell;
+            scrollStart = stripH;
+            viewportH = Math.Min(contentH, Math.Max(availH - stripH, 2 * LayoutMetrics.Cell));
 
             bool scrolls = contentH > viewportH + 0.5;
-            double maxScroll = Math.Max(0, contentH - viewportH);
-            scrollY = Math.Clamp(scrollY, 0, maxScroll);
+            scrollY = Math.Clamp(scrollY, 0, Math.Max(0, contentH - viewportH));
 
-            double railW = ShowRail ? RailW : 0;
-            double contentX = railW + (ShowRail ? Pad : 0);
-            double contentW = Math.Max(plan.Width, 4 * LayoutMetrics.Cell);
-            double scrollbarW = scrolls ? 20 : 0;
-
-            double bodyW = contentX + contentW + scrollbarW;
-            double bodyH = Math.Max(scrollStart + viewportH, 120) + FooterH + Pad;
+            contentX = railW;
+            double bodyW = contentX + Math.Max(flowW, iconAreaX + 4 * LayoutMetrics.Cell) + (scrolls ? 20 : 0);
+            double bodyH = stripH + Math.Max(viewportH, 60) + FooterH + Pad;
 
             var bgBounds = ElementBounds.Fixed(0, 0, bodyW, bodyH)
                 .WithFixedPadding(GuiStyle.ElementToDialogPadding);
             bgBounds.BothSizing = ElementSizing.FitToChildren;
 
             var dialogBounds = ElementStdBounds.AutosizedMainDialog
-                .WithAlignment(mode == LayoutMode.DockLeft
-                    ? EnumDialogArea.LeftMiddle
-                    : EnumDialogArea.CenterMiddle);
+                .WithAlignment(docked ? EnumDialogArea.LeftMiddle : EnumDialogArea.CenterMiddle);
 
             var composer = capi.Gui
                 .CreateCompo("symbioticinventories:master", dialogBounds)
                 .AddShadedDialogBG(bgBounds)
-                .AddDialogTitleBar(TitleText(), OnTitleBarClose)
+                .AddDialogTitleBar(TitleText(), () => TryClose())
                 .BeginChildElements(bgBounds);
 
-            if (ShowRail)
+            if (showRail)
             {
                 composer.AddStaticCustomDraw(
                     ElementBounds.Fixed(0, 0, RailW, bodyH - FooterH),
                     (ctx, surface, bounds) => DrawLegend(ctx, bounds));
             }
 
-            // Pinned region: drawn at its true position, never offset, never clipped.
-            if (scrollStart > 0)
+            // Top strip elements (dialog space, above the scroll viewport).
+            if (crafting != null)
             {
-                var pinnedBounds = ElementBounds.Fixed(contentX, 0, contentW, scrollStart);
-                composer.AddStaticCustomDraw(pinnedBounds, (ctx, surface, bounds) => DrawChrome(ctx, bounds, true));
+                var b = ElementStdBounds.SlotGrid(EnumDialogArea.None, contentX, 0, crafting.FixedColumns,
+                    (int)Math.Ceiling(crafting.SlotCount / (double)crafting.FixedColumns));
+                composer.AddItemSlotGrid(crafting.Inventory, crafting.SendPacket, crafting.FixedColumns, crafting.SlotIds, b, "grid-craft");
+            }
+            if (bagSlots != null)
+            {
+                var b = ElementStdBounds.SlotGrid(EnumDialogArea.None, contentX + craftingW, 0, bagSlots.SlotCount, 1);
+                composer.AddItemSlotGrid(bagSlots.Inventory, bagSlots.SendPacket, bagSlots.SlotCount, bagSlots.SlotIds, b, "grid-bags");
+            }
 
-                foreach (var box in PinnedBoxes())
+            for (int i = 0; i < flowSections.Count; i++)
+            {
+                var s = flowSections[i];
+                double ix = contentX + iconAreaX + (i % iconsPerRow) * (IconTile + 4);
+                double iy = (i / iconsPerRow) * (IconTile + 4);
+                iconTiles.Add((ix, iy, s));
+
+                if (s.Icon != null)
                 {
-                    var s = box.Section;
-                    var b = ElementStdBounds.SlotGrid(EnumDialogArea.None, contentX + box.X, box.GridY, box.Cols, box.Rows);
-                    composer.AddItemSlotGrid(s.Inventory, s.SendPacket, box.Cols, s.SlotIds, b, "grid-" + s.Id);
+                    var slot = new DummySlot(s.Icon);
+                    iconSlots.Add(slot);   // keep alive for the composer's lifetime
+                    composer.AddPassiveItemSlot(
+                        ElementBounds.Fixed(ix, iy, IconTile, IconTile),
+                        s.Inventory as InventoryBase, slot, false, "icon-" + s.Id);
                 }
             }
 
-            var viewport = ElementBounds.Fixed(contentX, scrollStart, contentW, Math.Max(viewportH, 1));
+            // Strip chrome (badges over vessel tiles) bakes into the dialog background.
+            composer.AddStaticCustomDraw(
+                ElementBounds.Fixed(contentX, 0, bodyW - contentX, stripH),
+                (ctx, surface, bounds) => DrawStripChrome(ctx, bounds));
 
-            // Scrolling chrome is one *dynamic* custom draw, not one static draw per section.
-            // Dynamic is what makes scrolling possible at all: a static element bakes into the
-            // background surface at compose time, so a scrolled plate would stay put while its
-            // slot grid slid away from it. Redraw() on scroll keeps them locked together, and
-            // one element keeps the count flat as containers open.
-            composer.AddDynamicCustomDraw(viewport, (ctx, surface, bounds) => DrawChrome(ctx, bounds, false), ChromeKey);
+            // ---- scrolling flow -------------------------------------------------
+            var viewport = ElementBounds.Fixed(contentX, scrollStart, flowW, Math.Max(viewportH, 1));
 
-            // COORDINATE SPACES - both verified against engine IL, both invisible to the
-            // headless probe, both found by a real in-game screenshot:
-            //  * BeginClip parents every subsequent element to the clip bounds
-            //    (GuiElementClipHelpler.BeginClip -> BeginChildElements). Coordinates inside
-            //    the clip are therefore RELATIVE TO THE VIEWPORT, not the dialog. Absolute
-            //    coordinates here render everything double-offset and push the right half of
-            //    wide sections clean off the window.
-            //  * The dynamic chrome element draws on its own element-sized surface
-            //    (GuiElementCustomDraw.Redraw creates an ImageSurface of exactly
-            //    OuterWidth x OuterHeight), so DrawChrome's scrolling pass must use LOCAL
-            //    coordinates - absolute ones land off-surface and nothing appears at all.
+            // Ribbon chrome is one dynamic custom draw (own element-sized surface, LOCAL
+            // coordinates); grids inside BeginClip are children of the clip and use
+            // viewport-relative coordinates. Both facts verified against engine IL and
+            // learned the hard way - see CLAUDE.md gotchas.
+            composer.AddDynamicCustomDraw(viewport, (ctx, surface, bounds) => DrawRibbons(ctx, bounds), ChromeKey);
+
             composer.BeginClip(viewport);
-            foreach (var box in ScrollingBoxes())
+            foreach (var ribbon in plan.Ribbons)
             {
-                var s = box.Section;
-                double relY = box.GridY - scrollStart;   // viewport-relative
+                var s = ribbon.Section;
+                foreach (var slice in ribbon.Slices)
+                {
+                    double relY = slice.Row * LayoutMetrics.Cell;
+                    var b = ElementStdBounds.SlotGrid(EnumDialogArea.None,
+                        slice.Col * LayoutMetrics.Cell, relY - scrollY, slice.Cols, slice.Rows);
 
-                var gridBounds = ElementStdBounds.SlotGrid(
-                    EnumDialogArea.None, box.X, relY - scrollY, box.Cols, box.Rows);
+                    var ids = new int[slice.Count];
+                    Array.Copy(s.SlotIds, slice.SlotOffset, ids, 0, slice.Count);
 
-                composer.AddItemSlotGrid(s.Inventory, s.SendPacket, box.Cols, s.SlotIds, gridBounds, "grid-" + s.Id);
-                scrollables.Add((gridBounds, relY));
+                    composer.AddItemSlotGrid(s.Inventory, s.SendPacket, slice.Cols, ids, b,
+                        "grid-" + s.Id + "-" + slice.SlotOffset);
+                    scrollables.Add((b, relY));
+                }
             }
             composer.EndClip();
 
             if (scrolls)
             {
-                var sbBounds = ElementBounds.Fixed(contentX + contentW + 4, scrollStart, 16, viewportH);
-                composer.AddVerticalScrollbar(OnNewScrollbarValue, sbBounds, ScrollKey);
+                var sb = ElementBounds.Fixed(contentX + flowW + 4, scrollStart, 16, viewportH);
+                composer.AddVerticalScrollbar(OnNewScrollbarValue, sb, ScrollKey);
             }
 
-            AddFooter(composer, contentX, bodyH - FooterH, bodyW - contentX);
+            AddFooter(composer, contentX, stripH + Math.Max(viewportH, 60) + Pad / 2);
 
             composer.EndChildElements();
             SingleComposer = composer.Compose();
@@ -330,74 +287,14 @@ namespace SymbioticInventories.Gui
             WatchInventories();
         }
 
-        /// <summary>
-        /// Widen before scrolling. An 18-column window is the readable default, but a wall of
-        /// chain-opened trunks at 18 columns means a scrollbar while the top-right of the
-        /// screen sits empty (seen in a real screenshot). Try the readable width first and
-        /// take the narrowest cap whose layout needs no scrolling; if even the widest cap
-        /// overflows, take that one - it scrolls the least.
-        /// </summary>
-        private LayoutPlan PackBestWidth(LayoutBudget budget)
-        {
-            if (mode != LayoutMode.Auto) return SectionPacker.Pack(sections, budget);
-
-            double screenAvail = budget.MaxWidth;
-
-            LayoutPlan bestFit = null;
-            double bestFitArea = double.MaxValue;
-            LayoutPlan leastScroll = null;
-            double leastScrollH = double.MaxValue;
-
-            // Step outward from the readable default all the way to the physical screen -
-            // not to a hardcoded ceiling. Among caps whose layout fits without scrolling,
-            // take the DENSEST bounding box (least width x height): the narrowest fit
-            // maximises height and produces a screen-tall jagged column. When NOTHING fits,
-            // take the SHORTEST layout - it scrolls least. (An earlier fallback kept the
-            // first overflowing candidate, i.e. the narrowest and tallest; one real
-            // screenshot of a skinny scrolling window full of 4x9 trunk towers later, it
-            // keeps the shortest.)
-            for (int capCols = 18; ; capCols += 4)
-            {
-                budget.MaxWidth = Math.Min(capCols * LayoutMetrics.Cell, screenAvail);
-                var candidate = SectionPacker.Pack(sections, budget);
-
-                if (!candidate.Overflows)
-                {
-                    double area = Math.Max(candidate.Width, 1) * Math.Max(candidate.Height, 1);
-                    if (area < bestFitArea - 0.001)
-                    {
-                        bestFitArea = area;
-                        bestFit = candidate;
-                    }
-                }
-                else if (candidate.Height < leastScrollH - 0.001)
-                {
-                    leastScrollH = candidate.Height;
-                    leastScroll = candidate;
-                }
-
-                // The screen itself is the last cap worth trying.
-                if (budget.MaxWidth >= screenAvail - 0.001) break;
-            }
-
-            return bestFit ?? leastScroll;
-        }
-
-        /// <summary>
-        /// Moves the scrolled content without recomposing: grid bounds are nudged (in
-        /// viewport-relative space - they are children of the clip) and the chrome element is
-        /// asked to redraw itself at the new offset.
-        /// </summary>
         private void OnNewScrollbarValue(float value)
         {
             scrollY = value;
-
             foreach (var (bounds, relY) in scrollables)
             {
                 bounds.fixedY = relY - scrollY;
                 bounds.CalcWorldBounds();
             }
-
             (SingleComposer?.GetElement(ChromeKey) as GuiElementCustomDraw)?.Redraw();
         }
 
@@ -408,7 +305,7 @@ namespace SymbioticInventories.Gui
             return Lang.Get("symbioticinventories:window-title") + " - " + state;
         }
 
-        private void AddFooter(GuiComposer composer, double x, double y, double width)
+        private void AddFooter(GuiComposer composer, double x, double y)
         {
             var btn = ElementBounds.Fixed(x, y + 2, 130, 24);
             composer.AddSmallButton(
@@ -423,146 +320,94 @@ namespace SymbioticInventories.Gui
         private bool OnToggleMode()
         {
             mode = mode == LayoutMode.Auto ? LayoutMode.DockLeft : LayoutMode.Auto;
-            // Entering the dock focused: the player just clicked the button, so their cursor
-            // is already in the window - snatching the mouse away mid-gesture would be rude.
             dockFocused = mode == LayoutMode.DockLeft;
-            scrollY = 0;   // a preserved offset means nothing in a differently shaped layout
+            scrollY = 0;
             Compose();
             return true;
         }
 
-        // ---- chrome drawing -----------------------------------------------------
+        // ---- chrome -------------------------------------------------------------
 
-        private IEnumerable<LayoutBox> PinnedBoxes()
+        /// <summary>Badges over the vessel tiles. Static draw: dialog-surface coordinates.</summary>
+        private void DrawStripChrome(Context ctx, ElementBounds bounds)
         {
-            foreach (var band in plan.Bands)
-                if (band.Pinned)
-                    foreach (var box in band.Boxes) yield return box;
-        }
-
-        private IEnumerable<LayoutBox> ScrollingBoxes()
-        {
-            foreach (var band in plan.Bands)
-                if (!band.Pinned)
-                    foreach (var box in band.Boxes) yield return box;
-        }
-
-        private void DrawChrome(Context ctx, ElementBounds bounds, bool pinned)
-        {
-            // Two different coordinate spaces, dictated by the two element kinds (see the
-            // compose-time comment): the pinned pass draws on the shared dialog surface, so
-            // drawX/drawY are meaningful offsets; the scrolling pass draws on the chrome
-            // element's OWN surface, whose origin is the viewport's top-left - so the origin
-            // is local zero shifted back by viewport start and scroll. The surface is only as
-            // big as its region, so Cairo clips the overspill for us.
-            // All layout coordinates are unscaled GUI units; Cairo surfaces are raw (scaled)
-            // pixels. Everything drawn here multiplies through by the GUI scale - at scale 1
-            // the omission is invisible, at 1.25+ every plate would drift off its grid.
             double g = RuntimeEnv.GUIScale;
-            double ox = pinned ? bounds.drawX : 0;
-            double oy = pinned ? bounds.drawY : (-scrollStart - scrollY) * g;
-
-            foreach (var band in plan.Bands)
+            foreach (var (x, y, s) in iconTiles)
             {
-                if (band.Pinned != pinned) continue;
+                // Tile outline in the section colour; badge in its corner.
+                double tx = bounds.drawX + (x - contentX) * g;
+                double ty = bounds.drawY + y * g;
 
-                if (plan.ShowBandCaptions && band.Boxes.Count > 0)
-                {
-                    ctx.SetSourceRGBA(0.82, 0.79, 0.72, 0.75);
-                    ctx.SelectFontFace(GuiStyle.StandardFontName, FontSlant.Normal, FontWeight.Bold);
-                    ctx.SetFontSize(12 * g);
-                    ctx.MoveTo(ox, oy + (band.Y + 13) * g);
-                    ctx.ShowText((band.Title ?? "").ToUpperInvariant());
-                }
+                ctx.SetSourceRGBA(s.Accent[0], s.Accent[1], s.Accent[2], 0.55);
+                ctx.LineWidth = 1.5 * g;
+                GuiElement.RoundRectangle(ctx, tx, ty, IconTile * g, IconTile * g, 2 * g);
+                ctx.Stroke();
 
-                foreach (var box in band.Boxes) DrawSectionPlate(ctx, ox, oy, box, g);
+                DrawBadge(ctx, tx - 3 * g, ty - 3 * g, 14 * g, s.Number, s.Accent);
             }
         }
 
         /// <summary>
-        /// A section's backing plate, border, accent spine and number badge.
-        ///
-        /// The tint is deliberately weak - it has to survive behind item sprites without
-        /// making them hard to read - so the border and badge carry the section boundary.
-        /// Narrow sections (under six columns) get no caption text at all: four backpacks
-        /// side by side each writing their full name produced one continuous smear of text
-        /// ("bleeding into each other"); the badge plus the legend rail carry the name.
+        /// Ribbon fills and outlines over the flow. Dynamic draw: LOCAL surface coordinates,
+        /// origin at the viewport's top-left, shifted by scroll.
         /// </summary>
-        private void DrawSectionPlate(Context ctx, double ox, double oy, LayoutBox box, double g)
+        private void DrawRibbons(Context ctx, ElementBounds bounds)
         {
-            var s = box.Section;
-            var a = s.Accent;
+            double g = RuntimeEnv.GUIScale;
+            double cell = LayoutMetrics.Cell * g;
+            double oy = -scrollY * g;
 
-            double x = ox + box.X * g;
-            double y = oy + box.Y * g;
-            double w = box.W * g;
-            double h = box.H * g;
-
-            // Sections may be L-shaped: a non-divisor width leaves a partial, left-aligned
-            // last row (the engine's slot grid draws it natively). The plate has to trace
-            // that true silhouette - a bounding-box plate would visually claim the notch
-            // that a neighbouring section is interlocked into.
-            int foot = box.Cols > 0 ? s.SlotCount % box.Cols : 0;
-            bool isL = foot > 0 && box.Rows > 1;
-
-            if (isL)
+            foreach (var ribbon in plan.Ribbons)
             {
-                double cell = LayoutMetrics.Cell * g;
-                double footW = foot * cell;
+                var s = ribbon.Section;
+                var a = s.Accent;
 
-                void TraceL()
+                int W = plan.Cols;
+                int start = ribbon.StartCell, end = ribbon.EndCell - 1;
+                int r0 = start / W, c0 = start % W;
+                int r1 = end / W, c1 = end % W + 1;
+
+                // Fill + outline. Contiguous multi-row ribbons trace the text-selection
+                // polygon; the two-partial-rows-no-overlap case falls back to per-slice
+                // rectangles (the polygon would self-intersect).
+                bool polygon = r1 > r0 && (r1 - r0 >= 2 || c1 > c0);
+
+                void Trace()
                 {
-                    ctx.MoveTo(x, y);
-                    ctx.LineTo(x + w, y);
-                    ctx.LineTo(x + w, y + h - cell);
-                    ctx.LineTo(x + footW, y + h - cell);
-                    ctx.LineTo(x + footW, y + h);
-                    ctx.LineTo(x, y + h);
-                    ctx.ClosePath();
+                    if (r0 == r1)
+                    {
+                        ctx.Rectangle(c0 * cell, oy + r0 * cell, (c1 - c0) * cell, cell);
+                    }
+                    else if (polygon)
+                    {
+                        ctx.MoveTo(c0 * cell, oy + r0 * cell);
+                        ctx.LineTo(W * cell, oy + r0 * cell);
+                        ctx.LineTo(W * cell, oy + r1 * cell);
+                        ctx.LineTo(c1 * cell, oy + r1 * cell);
+                        ctx.LineTo(c1 * cell, oy + (r1 + 1) * cell);
+                        ctx.LineTo(0, oy + (r1 + 1) * cell);
+                        ctx.LineTo(0, oy + (r0 + 1) * cell);
+                        ctx.LineTo(c0 * cell, oy + (r0 + 1) * cell);
+                        ctx.ClosePath();
+                    }
+                    else
+                    {
+                        ctx.Rectangle(c0 * cell, oy + r0 * cell, (W - c0) * cell, cell);
+                        ctx.Rectangle(0, oy + r1 * cell, c1 * cell, cell);
+                    }
                 }
 
-                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.15);
-                TraceL();
+                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.10);
+                Trace();
                 ctx.Fill();
 
-                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.55);
+                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.65);
                 ctx.LineWidth = 1.5 * g;
-                TraceL();
+                Trace();
                 ctx.Stroke();
+
+                DrawBadge(ctx, c0 * cell + 2 * g, oy + r0 * cell + 2 * g, 14 * g, s.Number, a);
             }
-            else
-            {
-                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.15);
-                GuiElement.RoundRectangle(ctx, x, y, w, h, 3 * g);
-                ctx.Fill();
-
-                // Border stroke: the boundary cue the low-alpha fill cannot provide.
-                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.55);
-                ctx.LineWidth = 1.5 * g;
-                GuiElement.RoundRectangle(ctx, x, y, w, h, 3 * g);
-                ctx.Stroke();
-            }
-
-            ctx.SetSourceRGBA(a[0], a[1], a[2], 0.85);
-            GuiElement.RoundRectangle(ctx, x, y, 3 * g, h, 1 * g);
-            ctx.Fill();
-
-            double textX = x + 8 * g;
-            if (s.Numbered)
-            {
-                DrawBadge(ctx, x + 8 * g, y + 3 * g, 17 * g, s.Number, a);
-                textX = x + (8 + 17 + 7) * g;
-            }
-
-            // Caption only where there is honestly room for one.
-            if (box.W < 6 * LayoutMetrics.Cell) return;
-
-            string caption = s.SubLabel == null ? s.Label : s.Label + "  -  " + s.SubLabel;
-            ctx.SetSourceRGBA(0.94, 0.91, 0.86, 0.94);
-            ctx.SelectFontFace(GuiStyle.StandardFontName, FontSlant.Normal, FontWeight.Normal);
-            ctx.SetFontSize(12.5 * g);
-            ctx.MoveTo(textX, y + 16 * g);
-            ctx.ShowText(Truncate(ctx, caption, w - (textX - x) - 6 * g));
         }
 
         private static void DrawBadge(Context ctx, double x, double y, double size, int number, double[] accent)
@@ -593,17 +438,16 @@ namespace SymbioticInventories.Gui
             ctx.ShowText(Lang.Get("symbioticinventories:legend-title"));
             y += 24 * g;
 
-            foreach (var s in sections)
+            foreach (var s in flowSections)
             {
-                if (!s.Numbered) continue;
-
                 DrawBadge(ctx, x, y, 14 * g, s.Number, s.Accent);
 
+                string caption = s.SubLabel == null ? s.Label : s.Label + " - " + s.SubLabel;
                 ctx.SetSourceRGBA(0.90, 0.88, 0.83, 0.92);
                 ctx.SelectFontFace(GuiStyle.StandardFontName, FontSlant.Normal, FontWeight.Normal);
                 ctx.SetFontSize(12 * g);
                 ctx.MoveTo(x + 21 * g, y + 11 * g);
-                ctx.ShowText(Truncate(ctx, s.Label, (RailW - 34) * g));
+                ctx.ShowText(Truncate(ctx, caption, (RailW - 34) * g));
 
                 y += 19 * g;
             }
@@ -621,6 +465,37 @@ namespace SymbioticInventories.Gui
             return "";
         }
 
-        private void OnTitleBarClose() => TryClose();
+        // ---- inventory shape watching -------------------------------------------
+        //
+        // Slot grids are composed against a snapshot of slot ids, and the backpack
+        // inventory's slot count changes at runtime (picking a worn bag removes its content
+        // slots). A stale grid recomposing during render dies on a vanished slot - found by
+        // a real crash. Watch SlotModified and recompose the moment the shape drifts.
+
+        private void WatchInventories()
+        {
+            UnwatchInventories();
+
+            var seen = new HashSet<IInventory>();
+            foreach (var s in sections)
+            {
+                var inv = s.Inventory;
+                if (inv == null || !seen.Add(inv)) continue;
+
+                int countAtCompose = inv.Count;
+                Action<int> handler = slotId =>
+                {
+                    if (inv.Count != countAtCompose || slotId >= countAtCompose) Refresh();
+                };
+                inv.SlotModified += handler;
+                watched.Add((inv, handler));
+            }
+        }
+
+        private void UnwatchInventories()
+        {
+            foreach (var (inv, handler) in watched) inv.SlotModified -= handler;
+            watched.Clear();
+        }
     }
 }

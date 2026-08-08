@@ -58,11 +58,17 @@ namespace SymbioticInventories.Core
 
         /// <summary>
         /// Column count this section must be drawn at, or 0 to let the layout system choose.
-        /// Set it only where the shape carries meaning: a crafting grid is square because the
-        /// recipes are, and the hotbar is one row because the number keys are. Everything else
-        /// packs better when the packer is free to reshape it.
+        /// Only meaningful for the fixed top-strip sections (the crafting grid is square
+        /// because its recipes are); flow sections are shaped by the unified grid.
         /// </summary>
         public int FixedColumns;
+
+        /// <summary>
+        /// Representative itemstack for the vessel row - the worn bag itself, or the
+        /// container's block. Null when there is nothing sensible to show (entity
+        /// containers); the badge tile still renders.
+        /// </summary>
+        public ItemStack Icon;
 
         public int SlotCount => SlotIds?.Length ?? 0;
 

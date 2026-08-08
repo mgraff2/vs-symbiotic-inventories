@@ -172,15 +172,18 @@ namespace SymbioticInventories.Integration
         /// every *touching* container whose block entity is the same type, so the cluster
         /// docks into the master window together.
         ///
-        /// Fully client-side: each neighbour block's own OnBlockInteractStart is invoked
-        /// locally, exactly as a right-click would - the block runs its complete open flow
-        /// (client dialog + Open packet to the server, which registers the open and syncs
-        /// the inventory). Because it is the block's own code path, modded containers work
-        /// unmodified, and the server still enforces range, locks and land claims - a chest
-        /// we may not open simply does not open.
+        /// Each neighbour gets a full synthetic right-click: the block's client-side
+        /// OnBlockInteractStart, then the same hand-interaction packets a real click sends
+        /// (verified against SystemMouseInWorldInteractions.TryBeginUseBlock). The packet is
+        /// the load-bearing half - vanilla chests open server-first: OnPlayerRightClick is a
+        /// no-op on the client (its IL gates on IServerWorldAccessor), and the dialog only
+        /// appears when the server processes the interaction and answers with packet 5000.
+        /// A first attempt that called only the client half opened exactly one chest.
         ///
-        /// Same-type matching is what keeps this conservative: a firepit or quern touching
-        /// the chest is a different block entity type and is never chained.
+        /// The server end enforces range, locks and land claims exactly as for a real click,
+        /// and modded containers work because it is their own interaction path. Same-type
+        /// matching keeps this conservative: a firepit or quern touching the chest is a
+        /// different block entity type and is never chained.
         /// </summary>
         private void MaybeChainOpen(BlockPos origin)
         {
@@ -228,7 +231,20 @@ namespace SymbioticInventories.Integration
                         Face = BlockFacing.UP,
                         HitPosition = new Vec3d(0.5, 0.5, 0.5)
                     };
+
+                    // Client half: harmless for server-first containers, necessary for
+                    // client-first ones (the GuiDialogBlockEntity open-handshake family).
                     block.OnBlockInteractStart(capi.World, capi.World.Player, sel);
+
+                    // Server half: begin + end of a block use, mouse button 2 (right), the
+                    // exact sequence a real click produces. (EnumItemUseCancelReason)0 is
+                    // what vanilla passes on the non-cancel path.
+                    capi.Network.SendHandInteraction(2, sel, null,
+                        EnumHandInteract.BlockInteract, (int)EnumHandInteractNw.StartBlockUse,
+                        false, (EnumItemUseCancelReason)0);
+                    capi.Network.SendHandInteraction(2, sel, null,
+                        EnumHandInteract.BlockInteract, (int)EnumHandInteractNw.StopBlockUse,
+                        false, (EnumItemUseCancelReason)0);
                 }
                 catch (Exception e)
                 {

@@ -144,6 +144,21 @@ content mods that only add blocks or recipes cannot collide with us and only cos
 Companion zips are cached in `tools/compat-cache/` (sourced live-Mods-folder first, then
 `ModsByServer/` newest-first, else the mod DB API). Delete the cache to re-source.
 
+### 2.5. Client probe — semi-automated slice of gate 3
+
+```powershell
+.\tools\client-probe.ps1            # needs an ACTIVE desktop session
+```
+
+Boots a real client into an isolated-dataPath test world with only this mod, waits for
+"[SymbioticInventories] Ready." + both "Capturing" lines, presses B, and screenshots before/
+after. **Look at the screenshots** — a vanilla-looking second frame is a failure, not a pass.
+
+Hard requirement: an active desktop. From a disconnected RDP session GLFW finds no monitors
+and the game dies in `GetPrimaryMonitor()` *before mods load* — the crash log
+(`ArgumentNullException 'handle'`, empty "Loaded Mods:") looks like a game bug but is purely
+environmental. The script preflights for this and exits 2 with a clear message.
+
 ### 3. Manual in-game checklist — before any release
 
 Gates 1 and 2 together still cannot see a single pixel. Rendering, click routing, and capture

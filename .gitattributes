@@ -1,0 +1,14 @@
+# Normalize line endings: LF in the repo, native on checkout.
+* text=auto
+
+# PowerShell is happiest with CRLF on Windows checkouts either way; keep scripts text.
+*.ps1 text
+*.cs text
+*.json text
+*.md text
+*.csproj text
+
+# Never normalize binaries.
+*.dll binary
+*.zip binary
+*.png binary

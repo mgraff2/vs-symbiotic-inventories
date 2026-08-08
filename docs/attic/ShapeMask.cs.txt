@@ -1,0 +1,47 @@
+using System;
+using System.Collections.Generic;
+
+namespace SymbioticInventories.Core.Layout
+{
+    /// <summary>
+    /// A silhouette the inventory can be packed into, expressed on the slot-cell grid.
+    /// Shapes are authored as ASCII art rather than generated from curves, on purpose.
+    /// '#' is inside the shape, anything else is outside.
+    /// </summary>
+    public class ShapeMask
+    {
+        public string Key;
+        public string Title;
+        public bool[,] Cells;
+        public int Rows;
+        public int Cols;
+
+        public static ShapeMask FromArt(string key, string title, params string[] art)
+        {
+            int rows = art.Length;
+            int cols = 0;
+            foreach (var line in art) cols = Math.Max(cols, line.Length);
+
+            var cells = new bool[rows, cols];
+            for (int r = 0; r < rows; r++)
+                for (int c = 0; c < art[r].Length; c++)
+                    cells[r, c] = art[r][c] == '#';
+
+            return new ShapeMask { Key = key, Title = title, Cells = cells, Rows = rows, Cols = cols };
+        }
+
+        public bool Inside(int row, int col)
+            => row >= 0 && col >= 0 && row < Rows && col < Cols && Cells[row, col];
+
+        public int Capacity()
+        {
+            int n = 0;
+            for (int r = 0; r < Rows; r++)
+                for (int c = 0; c < Cols; c++)
+                    if (Cells[r, c]) n++;
+            return n;
+        }
+    }
+}
+
+// ShapeLibrary with all 10 silhouettes follows in ShapeLibrary.txt

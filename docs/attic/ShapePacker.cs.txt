@@ -1,0 +1,129 @@
+using System;
+using System.Collections.Generic;
+
+namespace SymbioticInventories.Core.Layout
+{
+    /// <summary>
+    /// Packs sections into an arbitrary silhouette.
+    ///
+    /// The rule that keeps this from becoming decorative nonsense: a section is never split.
+    /// Every one of its slots lands in one solid rectangle, so "which bag is this slot in?"
+    /// stays answerable at a glance even when the whole window is turtle-shaped. The
+    /// silhouette constrains *where* rectangles may go, never whether a section stays whole.
+    ///
+    /// Placement is first-fit in registry order rather than best-fit, for the same reason the
+    /// band packer keeps its order: a bag that moves every time a chest opens is worse than a
+    /// bag sitting in a slightly suboptimal spot.
+    /// </summary>
+    public static class ShapePacker
+    {
+        public static LayoutPlan Pack(IReadOnlyList<InventorySection> sections, ShapeMask mask)
+        {
+            var plan = new LayoutPlan
+            {
+                Mode = LayoutMode.Shape,
+                ShowHeaders = false,
+                ChosenMaxCols = mask.Cols
+            };
+
+            var occupied = new bool[mask.Rows, mask.Cols];
+            var band = new LayoutBand { Key = "shape", Title = mask.Title };
+
+            foreach (var section in sections)
+            {
+                var box = TryPlace(section, mask, occupied);
+                if (box == null) { plan.Unplaced.Add(section); continue; }
+                band.Boxes.Add(box);
+            }
+
+            plan.Bands.Add(band);
+            plan.Width = mask.Cols * LayoutMetrics.Cell;
+            plan.Height = mask.Rows * LayoutMetrics.Cell;
+            return plan;
+        }
+
+        private static LayoutBox TryPlace(InventorySection section, ShapeMask mask, bool[,] occupied)
+        {
+            foreach (var (cols, rows) in CandidateShapes(section, mask))
+            {
+                for (int r = 0; r + rows <= mask.Rows; r++)
+                {
+                    for (int c = 0; c + cols <= mask.Cols; c++)
+                    {
+                        if (!Fits(mask, occupied, r, c, rows, cols)) continue;
+
+                        Occupy(occupied, r, c, rows, cols);
+                        return new LayoutBox
+                        {
+                            Section = section,
+                            Cols = cols,
+                            Rows = rows,
+                            X = c * LayoutMetrics.Cell,
+                            Y = r * LayoutMetrics.Cell,
+                            W = cols * LayoutMetrics.Cell,
+                            H = rows * LayoutMetrics.Cell
+                        };
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Rectangles to try for a section, best-looking first.
+        ///
+        /// A silhouette has narrow regions a square block will never enter, so unlike the band
+        /// layout the shape layout must be willing to reshape a section drastically - a 16-slot
+        /// bag may end up 2x8 to fit down a turtle's flipper. The preferred shape is still
+        /// tried first, so that only happens when nothing better fits.
+        /// </summary>
+        private static IEnumerable<(int cols, int rows)> CandidateShapes(InventorySection section, ShapeMask mask)
+        {
+            int n = section.SlotCount;
+            if (n <= 0) yield break;
+
+            var seen = new HashSet<int>();
+
+            // A fixed-shape section (crafting grid, hotbar) is offered its true shape first,
+            // but is still allowed to reflow rather than be dropped from the layout entirely.
+            if (section.FixedColumns > 0 && section.FixedColumns <= mask.Cols)
+            {
+                seen.Add(section.FixedColumns);
+                yield return (section.FixedColumns, (int)Math.Ceiling(n / (double)section.FixedColumns));
+            }
+
+            int preferred = GridShape.ChooseColumns(n, 3, Math.Min(mask.Cols, 10));
+            if (seen.Add(preferred)) yield return (preferred, (int)Math.Ceiling(n / (double)preferred));
+
+            // Exact divisors keep the block solid with no ragged row; try them widest-first,
+            // since horizontal room is usually the scarcer resource inside a silhouette.
+            var divisors = new List<int>();
+            for (int c = 1; c <= Math.Min(n, mask.Cols); c++) if (n % c == 0) divisors.Add(c);
+            divisors.Sort((a, b) => b.CompareTo(a));
+            foreach (var c in divisors) if (seen.Add(c)) yield return (c, n / c);
+
+            // Last resort: any width at all, ragged row accepted.
+            for (int c = Math.Min(n, mask.Cols); c >= 1; c--)
+                if (seen.Add(c)) yield return (c, (int)Math.Ceiling(n / (double)c));
+        }
+
+        private static bool Fits(ShapeMask mask, bool[,] occupied, int row, int col, int rows, int cols)
+        {
+            for (int r = row; r < row + rows; r++)
+                for (int c = col; c < col + cols; c++)
+                    if (!mask.Cells[r, c] || occupied[r, c]) return false;
+            return true;
+        }
+
+        private static void Occupy(bool[,] occupied, int row, int col, int rows, int cols)
+        {
+            for (int r = row; r < row + rows; r++)
+                for (int c = col; c < col + cols; c++)
+                    occupied[r, c] = true;
+        }
+    }
+}
+
+// NOTE: depends on LayoutPlan members that were removed with shape mode:
+//   LayoutMode.Shape, LayoutPlan.ShowHeaders, LayoutPlan.Unplaced, LayoutBudget.ShapeKey
+// Restore those alongside this file (see attic README).

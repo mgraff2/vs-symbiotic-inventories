@@ -1,0 +1,13 @@
+bin/
+obj/
+dist/
+
+# Extracted dedicated-server packages, ~300 MB each (2.1 GB for the full 1.22.0-1.22.6 set).
+# Repopulated on demand by tools/version-sweep.ps1, which downloads from the official CDN.
+tools/server-cache/
+
+# Companion mod zips, sourced from the live Mods folder / ModsByServer / the mod DB API.
+tools/compat-cache/
+
+# Companion mod zips dropped in the repo root for triage.
+/*.zip

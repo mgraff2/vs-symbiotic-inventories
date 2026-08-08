@@ -1,0 +1,21 @@
+{
+  "window-title": "Symbiotic Inventories",
+  "hotkey": "Symbiotic Inventories window",
+  "hotkey-focus": "Symbiotic Inventories: focus docked window",
+  "legend-title": "Open storage",
+  "section-crafting": "Crafting",
+  "section-hotbar": "Hotbar",
+  "section-bagslots": "Worn bags",
+  "section-backpack-n": "Backpack {0}",
+  "container": "Container",
+  "worn": "worn",
+  "aboard": "aboard",
+  "blocks-away": "{0} blocks away",
+  "band-essentials": "Essentials",
+  "band-storage": "Storage",
+  "band-hotbar": "Hotbar",
+  "dock-locked": "docked",
+  "dock-focused": "docked (cursor)",
+  "btn-dock": "Dock left",
+  "btn-float": "Float window"
+}

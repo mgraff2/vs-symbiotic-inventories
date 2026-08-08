@@ -1,0 +1,13 @@
+{
+  "type": "code",
+  "modid": "symbioticinventories",
+  "name": "Symbiotic Inventories",
+  "authors": [ "markc" ],
+  "description": "One master inventory window. Every container you open - chests, clay vessels, baskets, ground bags, saddlebags, boat crates - docks into a single unified grid alongside your backpacks and crafting grid, with colour-coded, numbered sections so you always know which bag or chest a slot belongs to.",
+  "version": "0.1.0",
+  "side": "Client",
+  "requiredOnClient": true,
+  "dependencies": {
+    "game": "1.22.0"
+  }
+}

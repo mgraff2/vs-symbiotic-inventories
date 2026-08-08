@@ -68,6 +68,9 @@ namespace SymbioticInventories.Gui
         /// <summary>Live config, for behaviours the window drives (sort options). Wired by the mod system.</summary>
         public ModConfig Config;
 
+        /// <summary>Capture service, for the contextual cellar button. Wired by the mod system.</summary>
+        public Integration.DialogCaptureService Capture;
+
         /// <summary>Grid bounds paired with their viewport-relative Y, for scrolling without recompose.</summary>
         private readonly List<(ElementBounds bounds, double relY)> scrollables = new();
 
@@ -644,6 +647,24 @@ namespace SymbioticInventories.Gui
 
             var sortBtn = ElementBounds.Fixed(x + 256, y + 2, 110, 24);
             composer.AddSmallButton(Lang.Get("symbioticinventories:btn-sort"), OnSort, sortBtn, EnumButtonStyle.Normal);
+
+            // "Open cellar" appears only while the player stands in a cellar that still has
+            // unopened containers - a contextual action, no clutter otherwise.
+            int cellarCount = Capture?.FindCellarContainers()?.Count ?? 0;
+            if (cellarCount > 0)
+            {
+                var cellarBtn = ElementBounds.Fixed(x + 374, y + 2, 150, 24);
+                composer.AddSmallButton(Lang.Get("symbioticinventories:btn-cellar", cellarCount),
+                    OnOpenCellar, cellarBtn, EnumButtonStyle.Normal);
+            }
+        }
+
+        /// <summary>Opens every container in the cellar the player is standing in.</summary>
+        private bool OnOpenCellar()
+        {
+            Capture?.OpenCellarContainers();
+            // The captures fire their own recompose via OnCapturesChanged; nothing more to do.
+            return true;
         }
 
         /// <summary>Sorts the visible containers' contents globally, then recomposes.</summary>

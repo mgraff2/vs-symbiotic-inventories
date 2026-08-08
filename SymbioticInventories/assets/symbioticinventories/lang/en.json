@@ -19,6 +19,7 @@
   "btn-float": "Float window",
   "btn-options": "Options",
   "btn-sort": "Sort items",
+  "btn-cellar": "Open cellar ({0})",
   "hidden-suffix": "(hidden)",
   "options-title": "Symbiotic Inventories - Options",
   "opt-adjacent": "Open adjacent chests together",

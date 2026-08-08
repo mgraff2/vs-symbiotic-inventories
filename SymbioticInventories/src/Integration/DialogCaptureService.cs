@@ -9,6 +9,7 @@ using SymbioticInventories.Core;
 using Vintagestory.API.Common.Entities;
 using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
+using Vintagestory.GameContent;
 
 namespace SymbioticInventories.Integration
 {
@@ -48,6 +49,11 @@ namespace SymbioticInventories.Integration
         /// <summary>Ceiling on how many neighbours one click may open.</summary>
         private const int MaxChainOpen = 16;
 
+        /// <summary>Ceiling on containers opened by one cellar sweep (cellars can be large).</summary>
+        private const int MaxCellarOpen = 32;
+
+        private RoomRegistry roomRegistry;
+
         /// <summary>Raised whenever the set of captured dialogs changes, so the window can recompose.</summary>
         public event Action OnCapturesChanged;
 
@@ -62,6 +68,12 @@ namespace SymbioticInventories.Integration
 
             PatchDialog(harmony, BlockDialogType);
             PatchDialog(harmony, CreatureDialogType);
+
+            // The room/cellar detector is a VSEssentials mod system; absent only in the most
+            // stripped setups. Missing just disables the cellar feature.
+            roomRegistry = api.ModLoader.GetModSystem<RoomRegistry>();
+            if (roomRegistry == null)
+                logger.Warning("[SymbioticInventories] RoomRegistry not found - cellar detection disabled.");
 
             // The OnGuiClosed prefix is necessary but NOT sufficient. Vanilla's own
             // GuiDialogBlockEntityInventory.OnGuiClosed only calls base.OnGuiClosed() when its
@@ -227,39 +239,100 @@ namespace SymbioticInventories.Integration
                 .CompareTo(Math.Abs(b.X - origin.X) + Math.Abs(b.Y - origin.Y) + Math.Abs(b.Z - origin.Z)));
             if (toOpen.Count > MaxChainOpen) toOpen.RemoveRange(MaxChainOpen, toOpen.Count - MaxChainOpen);
 
-            foreach (var p in toOpen)
+            foreach (var p in toOpen) SynthOpenBlock(p);
+        }
+
+        /// <summary>
+        /// Opens the container at <paramref name="p"/> by synthesizing the exact right-click a
+        /// player would make (verified against SystemMouseInWorldInteractions.TryBeginUseBlock):
+        /// the block's client-side OnBlockInteractStart, then the Start/Stop block-use hand
+        /// packets. The server processes it as a genuine interaction - perms/locks/range
+        /// enforced - and pushes the dialog, which the capture layer adopts. Marks the position
+        /// as auto-opened so the resulting capture does not cascade another chain.
+        /// </summary>
+        private void SynthOpenBlock(BlockPos p)
+        {
+            autoOpened.Add(p.Copy());
+            try
             {
-                autoOpened.Add(p.Copy());
-                try
+                var block = capi.World.BlockAccessor.GetBlock(p);
+                var sel = new BlockSelection
                 {
-                    var block = capi.World.BlockAccessor.GetBlock(p);
-                    var sel = new BlockSelection
-                    {
-                        Position = p.Copy(),
-                        Face = BlockFacing.UP,
-                        HitPosition = new Vec3d(0.5, 0.5, 0.5)
-                    };
-
-                    // Client half: harmless for server-first containers, necessary for
-                    // client-first ones (the GuiDialogBlockEntity open-handshake family).
-                    block.OnBlockInteractStart(capi.World, capi.World.Player, sel);
-
-                    // Server half: begin + end of a block use, mouse button 2 (right), the
-                    // exact sequence a real click produces. (EnumItemUseCancelReason)0 is
-                    // what vanilla passes on the non-cancel path.
-                    capi.Network.SendHandInteraction(2, sel, null,
-                        EnumHandInteract.BlockInteract, (int)EnumHandInteractNw.StartBlockUse,
-                        false, (EnumItemUseCancelReason)0);
-                    capi.Network.SendHandInteraction(2, sel, null,
-                        EnumHandInteract.BlockInteract, (int)EnumHandInteractNw.StopBlockUse,
-                        false, (EnumItemUseCancelReason)0);
-                }
-                catch (Exception e)
-                {
-                    autoOpened.Remove(p);
-                    logger.Warning("[SymbioticInventories] Chain-open of {0} failed: {1}", p, e.Message);
-                }
+                    Position = p.Copy(),
+                    Face = BlockFacing.UP,
+                    HitPosition = new Vec3d(0.5, 0.5, 0.5)
+                };
+                block.OnBlockInteractStart(capi.World, capi.World.Player, sel);
+                capi.Network.SendHandInteraction(2, sel, null,
+                    EnumHandInteract.BlockInteract, (int)EnumHandInteractNw.StartBlockUse,
+                    false, (EnumItemUseCancelReason)0);
+                capi.Network.SendHandInteraction(2, sel, null,
+                    EnumHandInteract.BlockInteract, (int)EnumHandInteractNw.StopBlockUse,
+                    false, (EnumItemUseCancelReason)0);
             }
+            catch (Exception e)
+            {
+                autoOpened.Remove(p);
+                logger.Warning("[SymbioticInventories] Synthetic open of {0} failed: {1}", p, e.Message);
+            }
+        }
+
+        // ---- cellar --------------------------------------------------------------
+
+        /// <summary>
+        /// The block positions of not-yet-open standard containers in the cellar the player is
+        /// standing in, or null if they are not in a cellar. A cellar is the game's own room
+        /// concept: a fully sealed room (no exits) with cooling walls - exactly what qualifies
+        /// a space for food preservation, so it matches player intuition.
+        /// </summary>
+        public List<BlockPos> FindCellarContainers()
+        {
+            var room = roomRegistry?.GetRoomForPosition(capi.World.Player.Entity.Pos.AsBlockPos);
+            if (room == null || room.Location == null) return null;
+            if (room.ExitCount != 0 || room.CoolingWallCount <= 0) return null;   // not a cellar
+
+            var loc = room.Location;
+            long volume = (long)(loc.X2 - loc.X1 + 1) * (loc.Y2 - loc.Y1 + 1) * (loc.Z2 - loc.Z1 + 1);
+            if (volume > 20000) return null;   // absurd "room": bail rather than scan forever
+
+            var found = new List<BlockPos>();
+            var ba = capi.World.BlockAccessor;
+            for (int x = loc.X1; x <= loc.X2; x++)
+            for (int y = loc.Y1; y <= loc.Y2; y++)
+            for (int z = loc.Z1; z <= loc.Z2; z++)
+            {
+                var pos = new BlockPos(x, y, z);
+                if (!IsStandardContainer(ba.GetBlockEntity(pos)) || IsCapturedAt(pos)) continue;
+                found.Add(pos);
+            }
+            return found;
+        }
+
+        /// <summary>Opens every not-yet-open standard container in the current cellar.</summary>
+        public void OpenCellarContainers()
+        {
+            var toOpen = FindCellarContainers();
+            if (toOpen == null || toOpen.Count == 0) return;
+            if (toOpen.Count > MaxCellarOpen) toOpen.RemoveRange(MaxCellarOpen, toOpen.Count - MaxCellarOpen);
+            foreach (var p in toOpen) SynthOpenBlock(p);
+            logger.Notification("[SymbioticInventories] Cellar: opened {0} container(s).", toOpen.Count);
+        }
+
+        /// <summary>
+        /// A container the master window can actually adopt: a block-entity container whose
+        /// dialog is the standard slot-grid one. Barrels, querns and the like carry custom
+        /// dialogs the capture layer ignores, so opening them would just pop their own window -
+        /// exclude them by name rather than absorb a firepit into a cellar sweep.
+        /// </summary>
+        private static bool IsStandardContainer(BlockEntity be)
+        {
+            if (be == null) return false;
+            if (!(be is BlockEntityContainer)) return false;
+            string n = be.GetType().Name;
+            return n != "BlockEntityBarrel"
+                && n != "BlockEntityQuern"
+                && n != "BlockEntityCrock"
+                && n != "BlockEntityBloomery";
         }
 
         private bool IsCapturedAt(BlockPos pos)

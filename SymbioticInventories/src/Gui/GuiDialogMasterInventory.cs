@@ -91,6 +91,14 @@ namespace SymbioticInventories.Gui
 
         private readonly List<(IInventory inv, Action<int> handler)> watched = new();
 
+        /// <summary>
+        /// Slots we painted with their section's accent, and what colour they had before.
+        /// ItemSlot.HexBackgroundColor is the engine's own slot-face tint (it is how vanilla
+        /// colours bag-content slots), so the tint renders IN the cell - a plate drawn under
+        /// an opaque slot texture only ever showed in the padding gutters.
+        /// </summary>
+        private readonly Dictionary<ItemSlot, string> paintedSlots = new();
+
         public GuiDialogMasterInventory(ICoreClientAPI capi, SectionRegistry registry) : base(capi)
         {
             this.registry = registry;
@@ -145,6 +153,49 @@ namespace SymbioticInventories.Gui
             var im = capi.World.Player.InventoryManager;
             var craftInv = im.GetOwnInventory(GlobalConstants.craftingInvClassName);
             if (craftInv != null) im.CloseInventoryAndSync(craftInv);
+
+            RestoreSlotPaint();
+        }
+
+        // ---- slot-face painting ---------------------------------------------------
+
+        /// <summary>
+        /// Lightened accent: HexBackgroundColor multiplies the parchment slot texture, so a
+        /// full-strength accent would render slots muddy-dark. ~45% accent toward white keeps
+        /// the hue obvious and the item sprite readable.
+        /// </summary>
+        private static string PastelHex(double[] a)
+        {
+            int C(double v) => (int)Math.Round((v * 0.45 + 0.55) * 255);
+            return $"#{C(a[0]):X2}{C(a[1]):X2}{C(a[2]):X2}";
+        }
+
+        /// <summary>Paints every visible ribbon's slot faces in its section colour.</summary>
+        private void PaintRibbonSlots()
+        {
+            RestoreSlotPaint();
+
+            foreach (var s in flowSections)
+            {
+                string hex = PastelHex(s.Accent);
+                foreach (var id in s.SlotIds)
+                {
+                    var slot = s.Inventory[id];
+                    if (slot == null) continue;
+                    if (!paintedSlots.ContainsKey(slot)) paintedSlots[slot] = slot.HexBackgroundColor;
+                    slot.HexBackgroundColor = hex;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Puts every painted slot back to the colour it had (bag slots have vanilla tints
+        /// of their own that must survive us). Runs before each repaint and on close.
+        /// </summary>
+        private void RestoreSlotPaint()
+        {
+            foreach (var kv in paintedSlots) kv.Key.HexBackgroundColor = kv.Value;
+            paintedSlots.Clear();
         }
 
         public void Refresh()
@@ -225,6 +276,8 @@ namespace SymbioticInventories.Gui
             {
                 if (!hiddenIds.Contains(s.Id)) flowSections.Add(s);
             }
+
+            PaintRibbonSlots();
 
             scrollables.Clear();
             iconTiles.Clear();

@@ -71,6 +71,15 @@ namespace SymbioticInventories.Gui
         /// <summary>Capture service, for the contextual cellar button. Wired by the mod system.</summary>
         public Integration.DialogCaptureService Capture;
 
+        /// <summary>
+        /// While true the window renders nothing and ignores input. Used while the Options
+        /// panel is open: the master window's item sprites render in a LATER stage than any
+        /// dialog's background (OnFinalizeFrame vs OnRenderGUI), so they would always draw on
+        /// top of the Options panel no matter the dialog order. Hiding the window entirely is
+        /// the only clean fix - the player is adjusting settings, not viewing inventory.
+        /// </summary>
+        public bool Suppressed;
+
         /// <summary>Grid bounds paired with their viewport-relative Y, for scrolling without recompose.</summary>
         private readonly List<(ElementBounds bounds, double relY)> scrollables = new();
 
@@ -247,6 +256,7 @@ namespace SymbioticInventories.Gui
         /// </summary>
         public override void OnMouseDown(MouseEvent args)
         {
+            if (Suppressed) return;   // invisible under the Options panel: let it take the click
             if (IsOpened() && !args.Handled)
             {
                 // Group chips: hide the whole container type at once; if the whole group is
@@ -557,8 +567,16 @@ namespace SymbioticInventories.Gui
         /// </summary>
         private bool hoverRenderFailed;
 
+        /// <summary>Render nothing while suppressed - skips the composer entirely.</summary>
+        public override void OnRenderGUI(float deltaTime)
+        {
+            if (Suppressed) return;
+            base.OnRenderGUI(deltaTime);
+        }
+
         public override void OnFinalizeFrame(float deltaTime)
         {
+            if (Suppressed) return;
             base.OnFinalizeFrame(deltaTime);
             if (!IsOpened() || hoverRenderFailed) return;
 

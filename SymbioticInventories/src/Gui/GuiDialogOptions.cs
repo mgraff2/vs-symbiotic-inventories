@@ -15,6 +15,9 @@ namespace SymbioticInventories.Gui
         private readonly ModConfig config;
         private readonly Action onChanged;
 
+        /// <summary>The master window to hide while these options are open. Wired by the mod system.</summary>
+        public GuiDialogMasterInventory MainWindow;
+
         public GuiDialogOptions(ICoreClientAPI capi, ModConfig config, Action onChanged) : base(capi)
         {
             this.config = config;
@@ -28,7 +31,16 @@ namespace SymbioticInventories.Gui
         public override void OnGuiOpened()
         {
             base.OnGuiOpened();
+            // Hide the master window while options are up (its item sprites would otherwise
+            // render on top of this panel - a later render stage, unavoidable by ordering).
+            if (MainWindow != null) MainWindow.Suppressed = true;
             Compose();
+        }
+
+        public override void OnGuiClosed()
+        {
+            base.OnGuiClosed();
+            if (MainWindow != null) MainWindow.Suppressed = false;
         }
 
         // Clean single-column layout, unscaled GUI units. Every row is switch-then-label or
@@ -83,7 +95,8 @@ namespace SymbioticInventories.Gui
                 .AddDialogTitleBar(Lang.Get("symbioticinventories:options-title"), () => TryClose())
                 .BeginChildElements(bgBounds);
 
-            yc = 0;
+            // Start below the title bar - content at y=0 runs into the title (as it did).
+            yc = GuiStyle.TitleBarHeight;
             SwitchRow("invKeySwitch", "symbioticinventories:opt-invkey",
                 v => { config.OpenOnInventoryKey = v; onChanged?.Invoke(); }, "symbioticinventories:opt-invkey-hint");
             SwitchRow("adjacentSwitch", "symbioticinventories:opt-adjacent", OnToggleAdjacent, "symbioticinventories:opt-adjacent-hint");

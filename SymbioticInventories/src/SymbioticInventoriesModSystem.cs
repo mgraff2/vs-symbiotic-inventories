@@ -42,7 +42,7 @@ namespace SymbioticInventories
 
             var registry = new SectionRegistry(api, capture);
             window = new GuiDialogMasterInventory(api, registry) { Config = config, Capture = capture };
-            options = new GuiDialogOptions(api, config, () => api.StoreModConfig(config, ModConfig.Filename));
+            options = new GuiDialogOptions(api, config, () => api.StoreModConfig(config, ModConfig.Filename)) { MainWindow = window };
             window.OpenOptions = () => options.TryOpen();
             api.Gui.RegisterDialog(options);
 

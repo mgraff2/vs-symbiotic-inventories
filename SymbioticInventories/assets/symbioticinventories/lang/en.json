@@ -25,6 +25,7 @@
   "opt-adjacent-hint": "One right-click on a chest also opens every chest of the same kind nearby, docking the whole wall into the window at once. Locked or claimed chests stay shut.",
   "opt-adjacent-radius": "Include chests within",
   "blocks-unit": "blocks",
-  "opt-mount": "Show the inventory of the mount you are riding",
+  "opt-mount": "Show your mount's inventory",
+  "opt-mount-hint": "Elk saddlebags and pack-animal bags of the mount you are riding appear in the window automatically. Nearby boats open all their crates at once.",
   "opt-entity-radius": "Include mounts/boats within"
 }

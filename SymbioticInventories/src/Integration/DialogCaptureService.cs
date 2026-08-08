@@ -384,15 +384,22 @@ namespace SymbioticInventories.Integration
         public void ClearPendingOpens() => pendingOpens.Clear();
 
         /// <summary>
-        /// A container the master window can actually adopt: a block-entity container whose
-        /// dialog is the standard slot-grid one. Barrels, querns and the like carry custom
-        /// dialogs the capture layer ignores, so opening them would just pop their own window -
-        /// exclude them by name rather than absorb a firepit into a cellar sweep.
+        /// A container the auto-open paths may safely right-click: one whose right-click
+        /// OPENS A DIALOG. BlockEntityOpenableContainer is the vanilla base carrying exactly
+        /// that contract, and it is what chests, vessels and baskets derive from.
+        ///
+        /// Requiring it is what keeps a synthesized click from becoming an item transfer:
+        /// the click-to-take family - shelves, pallets, FoodShelves flour sacks, anything on
+        /// BlockEntityDisplay - are also BlockEntityContainers, and a sweep that clicked one
+        /// would WITHDRAW GOODS (it pulled flour out of every sack in reach). Mere
+        /// containment is not evidence of a dialog; only OpenableContainer promises one.
+        ///
+        /// Barrels and querns are openable too but carry machine dialogs the capture layer
+        /// ignores; excluded by name so a cellar sweep does not pop their own windows.
         /// </summary>
         private static bool IsStandardContainer(BlockEntity be)
         {
-            if (be == null) return false;
-            if (!(be is BlockEntityContainer)) return false;
+            if (!(be is BlockEntityOpenableContainer)) return false;
             string n = be.GetType().Name;
             return n != "BlockEntityBarrel"
                 && n != "BlockEntityQuern"

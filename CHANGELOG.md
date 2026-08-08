@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed** the cellar sweep withdrawing goods from click-to-take containers (FoodShelves
+  flour sacks). Auto-open now only right-clicks containers that structurally promise a
+  dialog (`BlockEntityOpenableContainer`); shelf-family blocks are left alone.
 - **Line break between on-body and off-body storage.** The first chest/vehicle/mount section
   starts on a fresh row, leaving the rest of the worn bags' last line empty - one grid, two
   readable blocks: what's on you, then everything else.

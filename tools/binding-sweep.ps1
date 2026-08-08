@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Resolves the five API bindings Symbiotic Inventories depends on, against every cached
+    Resolves the six API bindings Symbiotic Inventories depends on, against every cached
     game version.
 
 .DESCRIPTION
@@ -89,6 +89,18 @@ if ($GameDir) {
         Check 'B4' 'field title'               ($null -ne $ccDlg.GetField('title', $decl))
     }
 
+    # B6 - harvest pass-through and auto-open eligibility. The carcass test reflects
+    # EntityBehaviorHarvestable.inv (identity against the dialog's inventory); losing it
+    # means harvest windows get captured again - annoying, not crashing, but real. The
+    # cellar/chain sweep requires BlockEntityOpenableContainer, the "right-click opens a
+    # dialog" contract; without it a synthesized click can WITHDRAW GOODS from
+    # click-to-take containers (FoodShelves flour sacks).
+    $srv = [System.Reflection.Assembly]::LoadFrom("$GameDir\Mods\VSSurvivalMod.dll")
+    $harv = $ess.GetType('Vintagestory.GameContent.EntityBehaviorHarvestable')
+    Check 'B6' 'EntityBehaviorHarvestable'     ($null -ne $harv)
+    if ($harv) { Check 'B6' 'field inv'        ($null -ne $harv.GetField('inv', $decl)) }
+    Check 'B6' 'BlockEntityOpenableContainer'  ($null -ne $srv.GetType('Vintagestory.GameContent.BlockEntityOpenableContainer'))
+
     # B5 - bag decomposition
     $bagContent = $api.GetType('Vintagestory.API.Common.ItemSlotBagContent')
     $gc = $api.GetType('Vintagestory.API.Config.GlobalConstants')
@@ -118,7 +130,7 @@ if (-not $Versions) {
 }
 if (-not $Versions) { throw "No versions to check." }
 
-Write-Host "Binding sweep - five bindings per version" -ForegroundColor Cyan
+Write-Host "Binding sweep - six bindings per version" -ForegroundColor Cyan
 Write-Host ""
 
 $pwsh = (Get-Process -Id $PID).Path

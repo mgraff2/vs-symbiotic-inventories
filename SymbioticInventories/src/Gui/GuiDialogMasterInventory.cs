@@ -99,6 +99,13 @@ namespace SymbioticInventories.Gui
         /// </summary>
         private readonly Dictionary<ItemSlot, string> paintedSlots = new();
 
+        /// <summary>Hovered-slot lookup: slot object -> owning section, rebuilt each compose.</summary>
+        private readonly Dictionary<ItemSlot, InventorySection> slotToSection = new();
+
+        /// <summary>Cached "#N Container" hover label texture and the key it was baked for.</summary>
+        private LoadedTexture hoverTex;
+        private string hoverTexKey;
+
         public GuiDialogMasterInventory(ICoreClientAPI capi, SectionRegistry registry) : base(capi)
         {
             this.registry = registry;
@@ -170,10 +177,12 @@ namespace SymbioticInventories.Gui
             return $"#{C(a[0]):X2}{C(a[1]):X2}{C(a[2]):X2}";
         }
 
-        /// <summary>Paints every visible ribbon's slot faces in its section colour.</summary>
+        /// <summary>Paints every visible ribbon's slot faces in its section colour, and
+        /// rebuilds the hover lookup while it is walking the same slots anyway.</summary>
         private void PaintRibbonSlots()
         {
             RestoreSlotPaint();
+            slotToSection.Clear();
 
             foreach (var s in flowSections)
             {
@@ -184,6 +193,7 @@ namespace SymbioticInventories.Gui
                     if (slot == null) continue;
                     if (!paintedSlots.ContainsKey(slot)) paintedSlots[slot] = slot.HexBackgroundColor;
                     slot.HexBackgroundColor = hex;
+                    slotToSection[slot] = s;
                 }
             }
         }
@@ -302,8 +312,13 @@ namespace SymbioticInventories.Gui
             var crafting = sections.Find(s => s.Kind == SectionKind.Crafting);
             var bagSlots = sections.Find(s => s.Kind == SectionKind.BackpackSlots);
 
-            int totalSlots = 0;
-            foreach (var s in flowSections) totalSlots += s.SlotCount;
+            // Frame capacity is ALL open containers, hidden ones included: the window sizes
+            // itself for everything and filter toggles only reflow ribbons INSIDE that fixed
+            // frame, leaving empty rows at the bottom. Resizing on every filter click forced
+            // the player to re-find their bearings each time (their words); the frame now
+            // only changes when a container genuinely opens or closes.
+            int frameSlots = 0;
+            foreach (var s in numberedSections) frameSlots += s.SlotCount;
 
             // Crafting is 3x3 PLUS its output slot to the right - the inventory's last slot.
             // Without the output slot on screen there is nowhere for a craft result to
@@ -356,13 +371,14 @@ namespace SymbioticInventories.Gui
             // ---- the flow -------------------------------------------------------
             int cols = docked
                 ? Math.Max(4, (int)(availW / LayoutMetrics.Cell))
-                : UnifiedGrid.ChooseCols(totalSlots, availW, availH - stripH);
+                : UnifiedGrid.ChooseCols(frameSlots, availW, availH - stripH);
             plan = UnifiedGrid.Compute(flowSections, cols);
 
             double flowW = plan.Cols * LayoutMetrics.Cell;
             contentH = plan.Rows * LayoutMetrics.Cell;
+            double frameH = Math.Ceiling(frameSlots / (double)Math.Max(cols, 1)) * LayoutMetrics.Cell;
             scrollStart = stripH;
-            viewportH = Math.Min(contentH, Math.Max(availH - stripH, 2 * LayoutMetrics.Cell));
+            viewportH = Math.Min(frameH, Math.Max(availH - stripH, 2 * LayoutMetrics.Cell));
 
             bool scrolls = contentH > viewportH + 0.5;
             scrollY = Math.Clamp(scrollY, 0, Math.Max(0, contentH - viewportH));
@@ -496,6 +512,47 @@ namespace SymbioticInventories.Gui
             }
 
             WatchInventories();
+        }
+
+        /// <summary>
+        /// "#N Container" label above the cursor while hovering a flow cell. The slot grids
+        /// already report hover through InventoryManager.CurrentHoveredSlot, so this is a
+        /// dictionary lookup per frame plus a texture cached until the section changes. Drawn
+        /// ABOVE the cursor because the engine's item tooltip renders below it.
+        /// </summary>
+        public override void OnRenderGUI(float deltaTime)
+        {
+            base.OnRenderGUI(deltaTime);
+
+            var hovered = capi.World?.Player?.InventoryManager?.CurrentHoveredSlot;
+            if (hovered == null || !slotToSection.TryGetValue(hovered, out var s)) return;
+
+            string key = "#" + s.Number + " " + s.Label;
+            if (hoverTex == null || hoverTexKey != key)
+            {
+                hoverTex?.Dispose();
+                hoverTex = capi.Gui.TextTexture.GenTextTexture(key, CairoFont.WhiteSmallText(),
+                    new TextBackground
+                    {
+                        FillColor = GuiStyle.DialogStrongBgColor,
+                        Padding = 5,
+                        Radius = 3,
+                        Shade = true
+                    });
+                hoverTexKey = key;
+            }
+
+            float x = capi.Input.MouseX + 12;
+            float y = capi.Input.MouseY - hoverTex.Height - 10;
+            if (y < 0) y = capi.Input.MouseY + 24;
+            capi.Render.Render2DTexturePremultipliedAlpha(hoverTex.TextureId, x, y, hoverTex.Width, hoverTex.Height);
+        }
+
+        public override void Dispose()
+        {
+            base.Dispose();
+            hoverTex?.Dispose();
+            hoverTex = null;
         }
 
         private void OnNewScrollbarValue(float value)

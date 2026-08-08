@@ -32,7 +32,7 @@ namespace SymbioticInventories.Gui
 
         private void Compose()
         {
-            var bgBounds = ElementBounds.Fixed(0, 0, 420, 120)
+            var bgBounds = ElementBounds.Fixed(0, 0, 420, 128)
                 .WithFixedPadding(GuiStyle.ElementToDialogPadding);
             bgBounds.BothSizing = ElementSizing.FitToChildren;
 
@@ -42,6 +42,8 @@ namespace SymbioticInventories.Gui
             var switchBounds = ElementBounds.Fixed(0, 10, 40, 24);
             var labelBounds = ElementBounds.Fixed(52, 13, 368, 24);
             var hintBounds = ElementBounds.Fixed(52, 38, 368, 44);
+            var radiusLabelBounds = ElementBounds.Fixed(52, 92, 200, 24);
+            var radiusSliderBounds = ElementBounds.Fixed(260, 92, 160, 22);
 
             SingleComposer = capi.Gui
                 .CreateCompo("symbioticinventories:options", dialogBounds)
@@ -53,16 +55,28 @@ namespace SymbioticInventories.Gui
                         CairoFont.WhiteSmallishText(), labelBounds)
                     .AddStaticText(Lang.Get("symbioticinventories:opt-adjacent-hint"),
                         CairoFont.WhiteDetailText(), hintBounds)
+                    .AddStaticText(Lang.Get("symbioticinventories:opt-adjacent-radius"),
+                        CairoFont.WhiteSmallishText(), radiusLabelBounds)
+                    .AddSlider(OnRadiusChanged, radiusSliderBounds, "radiusSlider")
                 .EndChildElements()
                 .Compose();
 
             SingleComposer.GetSwitch("adjacentSwitch").On = config.OpenAdjacentChests;
+            SingleComposer.GetSlider("radiusSlider").SetValues(
+                Math.Clamp(config.AdjacentOpenRadius, 1, 3), 1, 3, 1, " " + Lang.Get("symbioticinventories:blocks-unit"));
         }
 
         private void OnToggleAdjacent(bool on)
         {
             config.OpenAdjacentChests = on;
             onChanged?.Invoke();
+        }
+
+        private bool OnRadiusChanged(int value)
+        {
+            config.AdjacentOpenRadius = Math.Clamp(value, 1, 3);
+            onChanged?.Invoke();
+            return true;
         }
     }
 }

@@ -199,7 +199,7 @@ namespace SymbioticInventories.Integration
             // Every same-kind container within the radius box. A face-contiguity flood fill
             // was tried first and failed on a real chest wall: shelf boards between the rows
             // broke the chain, so only the directly touching third of the wall opened.
-            int radius = Math.Clamp(config.AdjacentOpenRadius, 1, 6);
+            int radius = Math.Clamp(config.AdjacentOpenRadius, 1, 3);   // matches the options slider
             var toOpen = new List<BlockPos>();
 
             for (int dx = -radius; dx <= radius; dx++)

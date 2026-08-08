@@ -196,7 +196,10 @@ namespace SymbioticInventories.Gui
                 // Full screen availability; Compose narrows this via width caps. The cap
                 // logic lives there because "how wide" depends on what is open right now.
                 budget.MaxWidth = Math.Max(4 * LayoutMetrics.Cell, screenW * 0.82 - RailW - Pad * 3);
-                budget.MaxHeight = screenH * 0.86 - chromeH;
+                // 0.92: every unit of height budget is a unit the warehouse case does not
+                // have to scroll. The dialog may overlap the vanilla hotbar HUD's row, which
+                // is fine - the mouse is free while the window is open.
+                budget.MaxHeight = screenH * 0.92 - chromeH;
             }
 
             return budget;
@@ -339,14 +342,20 @@ namespace SymbioticInventories.Gui
             if (mode != LayoutMode.Auto) return SectionPacker.Pack(sections, budget);
 
             double screenAvail = budget.MaxWidth;
-            LayoutPlan best = null;
-            double bestArea = double.MaxValue;
+
+            LayoutPlan bestFit = null;
+            double bestFitArea = double.MaxValue;
+            LayoutPlan leastScroll = null;
+            double leastScrollH = double.MaxValue;
 
             // Step outward from the readable default all the way to the physical screen -
             // not to a hardcoded ceiling. Among caps whose layout fits without scrolling,
-            // take the DENSEST bounding box (least width x height), not the first fit: the
-            // narrowest fit maximises height, producing a screen-tall jagged column while a
-            // slightly wider layout would be a compact block.
+            // take the DENSEST bounding box (least width x height): the narrowest fit
+            // maximises height and produces a screen-tall jagged column. When NOTHING fits,
+            // take the SHORTEST layout - it scrolls least. (An earlier fallback kept the
+            // first overflowing candidate, i.e. the narrowest and tallest; one real
+            // screenshot of a skinny scrolling window full of 4x9 trunk towers later, it
+            // keeps the shortest.)
             for (int capCols = 18; ; capCols += 4)
             {
                 budget.MaxWidth = Math.Min(capCols * LayoutMetrics.Cell, screenAvail);
@@ -355,22 +364,23 @@ namespace SymbioticInventories.Gui
                 if (!candidate.Overflows)
                 {
                     double area = Math.Max(candidate.Width, 1) * Math.Max(candidate.Height, 1);
-                    if (area < bestArea - 0.001)
+                    if (area < bestFitArea - 0.001)
                     {
-                        bestArea = area;
-                        best = candidate;
+                        bestFitArea = area;
+                        bestFit = candidate;
                     }
                 }
-                else if (best == null)
+                else if (candidate.Height < leastScrollH - 0.001)
                 {
-                    best = candidate;   // all-overflow fallback: the widest scrolls least
+                    leastScrollH = candidate.Height;
+                    leastScroll = candidate;
                 }
 
                 // The screen itself is the last cap worth trying.
                 if (budget.MaxWidth >= screenAvail - 0.001) break;
             }
 
-            return best;
+            return bestFit ?? leastScroll;
         }
 
         /// <summary>

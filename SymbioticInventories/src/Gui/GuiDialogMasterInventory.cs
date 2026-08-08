@@ -39,6 +39,9 @@ namespace SymbioticInventories.Gui
         private const double Pad = 10;
         private const double FooterH = 30;
 
+        /// <summary>Vertical space the dialog title bar occupies at the top; content sits below.</summary>
+        private static readonly double TitleH = GuiStyle.TitleBarHeight;
+
         /// <summary>Vessel-row tiles are 2/3 slot size: recognisable, but clearly not slots.</summary>
         private const double IconTile = 36;
 
@@ -154,11 +157,27 @@ namespace SymbioticInventories.Gui
             dockFocused = false;
             UnwatchInventories();
 
-            // Counterpart of the open: lets the server drop grid contents back to the player
-            // the same way closing the vanilla crafting dialog does.
+            // Return anything left in the crafting grid to the player, then close it. This is
+            // exactly what vanilla's inventory dialog does on close (verified in its
+            // OnGuiClosed IL): CloseInventoryAndSync alone only closes the inventory, it does
+            // NOT move the items out, so a half-finished craft used to sit in the grid until
+            // reopened. TryTransferAway pushes each stack into the backpack/hotbar and returns
+            // the sync packets to send.
             var im = capi.World.Player.InventoryManager;
             var craftInv = im.GetOwnInventory(GlobalConstants.craftingInvClassName);
-            if (craftInv != null) im.CloseInventoryAndSync(craftInv);
+            if (craftInv != null)
+            {
+                foreach (var slot in craftInv)
+                {
+                    if (slot == null || slot.Empty) continue;
+                    var op = new ItemStackMoveOperation(capi.World, EnumMouseButton.Left, 0,
+                        (EnumMergePriority)0, slot.StackSize) { ActingPlayer = capi.World.Player };
+                    var packets = im.TryTransferAway(slot, ref op, true, false);
+                    if (packets != null)
+                        foreach (var p in packets) capi.Network.SendPacketClient(p);
+                }
+                im.CloseInventoryAndSync(craftInv);
+            }
 
             RestoreSlotPaint();
         }
@@ -381,7 +400,10 @@ namespace SymbioticInventories.Gui
 
             contentH = plan.Rows * LayoutMetrics.Cell;
             double frameH = Math.Ceiling(frameSlots / (double)Math.Max(cols, 1)) * LayoutMetrics.Cell;
-            scrollStart = stripH;
+            // Everything sits below the title bar. Content used to start at Y=0, the same row
+            // the title bar draws in, so the crafting grid and vessel tiles covered up
+            // "Symbiotic Inventories" (user screenshot).
+            scrollStart = TitleH + stripH;
             viewportH = Math.Min(frameH, Math.Max(availH - stripH, 2 * LayoutMetrics.Cell));
 
             bool scrolls = contentH > viewportH + 0.5;
@@ -389,7 +411,7 @@ namespace SymbioticInventories.Gui
 
             contentX = railW;
             double bodyW = contentX + flowW + (scrolls ? 20 : 0);
-            double bodyH = stripH + Math.Max(viewportH, 60) + FooterH + Pad;
+            double bodyH = TitleH + stripH + Math.Max(viewportH, 60) + FooterH + Pad;
 
             var bgBounds = ElementBounds.Fixed(0, 0, bodyW, bodyH)
                 .WithFixedPadding(GuiStyle.ElementToDialogPadding);
@@ -404,10 +426,10 @@ namespace SymbioticInventories.Gui
                 .AddDialogTitleBar(TitleText(), () => TryClose())
                 .BeginChildElements(bgBounds);
 
-            // Top strip elements (dialog space, above the scroll viewport).
+            // Top strip elements, all shifted below the title bar (dialog space).
             if (crafting != null)
             {
-                var b = ElementStdBounds.SlotGrid(EnumDialogArea.None, contentX, 0, crafting.FixedColumns,
+                var b = ElementStdBounds.SlotGrid(EnumDialogArea.None, contentX, TitleH, crafting.FixedColumns,
                     (int)Math.Ceiling(crafting.SlotCount / (double)crafting.FixedColumns));
                 composer.AddItemSlotGrid(crafting.Inventory, crafting.SendPacket, crafting.FixedColumns, crafting.SlotIds, b, "grid-craft");
 
@@ -415,12 +437,12 @@ namespace SymbioticInventories.Gui
                 int outId = crafting.Inventory.Count - 1;
                 var ob = ElementStdBounds.SlotGrid(EnumDialogArea.None,
                     contentX + crafting.FixedColumns * LayoutMetrics.Cell + 8,
-                    (craftingH - LayoutMetrics.Cell) / 2, 1, 1);
+                    TitleH + (craftingH - LayoutMetrics.Cell) / 2, 1, 1);
                 composer.AddItemSlotGrid(crafting.Inventory, crafting.SendPacket, 1, new[] { outId }, ob, "grid-craftout");
             }
             if (bagSlots != null)
             {
-                var b = ElementStdBounds.SlotGrid(EnumDialogArea.None, contentX + craftingW, 0, bagSlots.SlotCount, 1);
+                var b = ElementStdBounds.SlotGrid(EnumDialogArea.None, contentX + craftingW, TitleH, bagSlots.SlotCount, 1);
                 composer.AddItemSlotGrid(bagSlots.Inventory, bagSlots.SendPacket, bagSlots.SlotCount, bagSlots.SlotIds, b, "grid-bags");
             }
 
@@ -428,7 +450,7 @@ namespace SymbioticInventories.Gui
             {
                 var item = stripItems[i];
                 double ix = contentX + iconAreaX + stripPos[i].x;
-                double iy = stripPos[i].y;
+                double iy = TitleH + stripPos[i].y;
 
                 if (item.isChip)
                 {
@@ -458,9 +480,11 @@ namespace SymbioticInventories.Gui
                 }
             }
 
-            // Strip chrome (badges over vessel tiles) bakes into the dialog background.
+            // Strip chrome (badges over vessel tiles) bakes into the dialog background. The
+            // element spans from the title bar down; the tile positions stored in iconTiles
+            // already include the TitleH offset, so DrawStripChrome adds no offset of its own.
             composer.AddStaticCustomDraw(
-                ElementBounds.Fixed(contentX, 0, bodyW - contentX, stripH),
+                ElementBounds.Fixed(contentX, 0, bodyW - contentX, TitleH + stripH),
                 (ctx, surface, bounds) => DrawStripChrome(ctx, bounds));
 
             // ---- scrolling flow -------------------------------------------------
@@ -498,7 +522,7 @@ namespace SymbioticInventories.Gui
                 composer.AddVerticalScrollbar(OnNewScrollbarValue, sb, ScrollKey);
             }
 
-            AddFooter(composer, contentX, stripH + Math.Max(viewportH, 60) + Pad / 2);
+            AddFooter(composer, contentX, TitleH + stripH + Math.Max(viewportH, 60) + Pad / 2);
 
             composer.EndChildElements();
             SingleComposer = composer.Compose();

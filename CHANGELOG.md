@@ -1,0 +1,43 @@
+# Changelog
+
+## v0.1.0 — first release
+
+One master inventory window for Vintage Story. Client-side only; no server install, no save
+changes.
+
+### Core
+
+- **Unified flow grid.** Every open container's slots pour into a single row-major grid; each
+  container is a contiguous colour-tinted **ribbon** (the cell backgrounds carry the container's
+  colour), so a slot's owner is obvious at a glance.
+- **Landscape layout** that fills the screen width and reflows to whatever is open — dense, and
+  rarely needs to scroll. The window sizes to the grid, no dead space.
+- **Crafting grid** always present with its output slot; leftover items return to your inventory
+  on close.
+- **Vessel row** of numbered icon tiles, one per container, matching the ribbons. Hovering a cell
+  names its container.
+
+### Interaction
+
+- **Hide/show**: click a tile to drop a container's ribbon; **group chips** hide a whole container
+  type at once. The window frame stays put so you never lose your bearings.
+- **Sort items** across the visible containers: grouped by category, categories and items ordered,
+  laid out respecting container boundaries; partial stacks merge for free.
+- **Open adjacent chests** with one right-click, within a configurable 1–3 block radius.
+- **Mounts & boats**: optionally show your mount's inventory and nearby pack animals / boats
+  (up to 10 blocks); a boat opens all its crates at once.
+- **Two modes**: centered floating window, or a left dock that stays up HUD-style with a focus
+  hotkey (**N**) to reach into it.
+- **Options** dialog for every toggle.
+
+### Compatibility
+
+- Verified across **Vintage Story 1.22.0 – 1.22.6** (binding sweep + headless server boot on all
+  seven), and co-loading cleanly with **Shipwright**. Driven in a real ~65-mod client.
+- Captures block and entity containers generically, so modded containers work unchanged; machines
+  (firepit, quern, barrel, traders) are deliberately left alone.
+
+### Known limits
+
+- Docked-left scrolls under heavy load. Mount/boat auto-open is the one path not verified in-game
+  (logs and degrades safely). Sort rearranges real chests with no undo.

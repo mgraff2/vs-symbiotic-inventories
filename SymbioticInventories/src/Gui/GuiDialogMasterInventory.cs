@@ -36,7 +36,6 @@ namespace SymbioticInventories.Gui
         private const string ChromeKey = "chrome";
         private const string ScrollKey = "scrollbar";
 
-        private const double RailW = 200;
         private const double Pad = 10;
         private const double FooterH = 30;
 
@@ -299,13 +298,15 @@ namespace SymbioticInventories.Gui
             double screenH = capi.Render.FrameHeight / scale;
 
             bool docked = mode == LayoutMode.DockLeft;
-            bool showRail = !docked;
 
-            double railW = showRail ? RailW + Pad : 0;
+            // No legend rail: the vessel tiles carry the icons and badges, and hovering a cell
+            // now names its container, so the rail was redundant chrome. Removing it shrinks
+            // the whole window (user ask). contentX is just the dialog padding.
+            double railW = 0;
             double chromeH = 40 + FooterH + Pad * 3;
             double availW = docked
                 ? Math.Min(screenW * 0.28, 10 * LayoutMetrics.Cell)
-                : Math.Max(8 * LayoutMetrics.Cell, screenW * 0.92 - railW - Pad * 2);
+                : Math.Max(8 * LayoutMetrics.Cell, screenW * 0.92 - Pad * 2);
             double availH = screenH * 0.92 - chromeH;
 
             // ---- top strip: crafting + worn bags + vessel row -------------------
@@ -399,13 +400,6 @@ namespace SymbioticInventories.Gui
                 .AddShadedDialogBG(bgBounds)
                 .AddDialogTitleBar(TitleText(), () => TryClose())
                 .BeginChildElements(bgBounds);
-
-            if (showRail)
-            {
-                composer.AddStaticCustomDraw(
-                    ElementBounds.Fixed(0, 0, RailW, bodyH - FooterH),
-                    (ctx, surface, bounds) => DrawLegend(ctx, bounds));
-            }
 
             // Top strip elements (dialog space, above the scroll viewport).
             if (crafting != null)
@@ -515,14 +509,19 @@ namespace SymbioticInventories.Gui
         }
 
         /// <summary>
-        /// "#N Container" label above the cursor while hovering a flow cell. The slot grids
-        /// already report hover through InventoryManager.CurrentHoveredSlot, so this is a
-        /// dictionary lookup per frame plus a texture cached until the section changes. Drawn
-        /// ABOVE the cursor because the engine's item tooltip renders below it.
+        /// "#N Container" label above the cursor while hovering a flow cell.
+        ///
+        /// Drawn in OnFinalizeFrame, NOT OnRenderGUI: slot item icons render later, during
+        /// GuiComposer.PostRender which the base OnFinalizeFrame drives (confirmed in the
+        /// engine call stack - PostRenderInteractiveElements sits under OnFinalizeFrame). A
+        /// tooltip drawn in OnRenderGUI is painted first and the item sprites land on top of
+        /// it - exactly the "falls behind the items" bug. Drawing after base.OnFinalizeFrame
+        /// puts it above them. Above the cursor, too, so it never fights the item tooltip.
         /// </summary>
-        public override void OnRenderGUI(float deltaTime)
+        public override void OnFinalizeFrame(float deltaTime)
         {
-            base.OnRenderGUI(deltaTime);
+            base.OnFinalizeFrame(deltaTime);
+            if (!IsOpened()) return;
 
             var hovered = capi.World?.Player?.InventoryManager?.CurrentHoveredSlot;
             if (hovered == null || !slotToSection.TryGetValue(hovered, out var s)) return;
@@ -760,35 +759,6 @@ namespace SymbioticInventories.Gui
             ctx.ShowText(t);
         }
 
-        private void DrawLegend(Context ctx, ElementBounds bounds)
-        {
-            double g = RuntimeEnv.GUIScale;
-            double x = bounds.drawX + 4 * g;
-            double y = bounds.drawY + 6 * g;
-
-            ctx.SetSourceRGBA(0.94, 0.91, 0.86, 0.96);
-            ctx.SelectFontFace(GuiStyle.StandardFontName, FontSlant.Normal, FontWeight.Bold);
-            ctx.SetFontSize(13 * g);
-            ctx.MoveTo(x, y + 12 * g);
-            ctx.ShowText(Lang.Get("symbioticinventories:legend-title"));
-            y += 24 * g;
-
-            foreach (var s in numberedSections)
-            {
-                bool hidden = hiddenIds.Contains(s.Id);
-                DrawBadge(ctx, x, y, 14 * g, s.Number, s.Accent);
-
-                string caption = s.SubLabel == null ? s.Label : s.Label + " - " + s.SubLabel;
-                if (hidden) caption += " " + Lang.Get("symbioticinventories:hidden-suffix");
-                ctx.SetSourceRGBA(0.90, 0.88, 0.83, hidden ? 0.45 : 0.92);
-                ctx.SelectFontFace(GuiStyle.StandardFontName, FontSlant.Normal, FontWeight.Normal);
-                ctx.SetFontSize(12 * g);
-                ctx.MoveTo(x + 21 * g, y + 11 * g);
-                ctx.ShowText(Truncate(ctx, caption, (RailW - 34) * g));
-
-                y += 19 * g;
-            }
-        }
 
         private static string Truncate(Context ctx, string text, double maxWidth)
         {

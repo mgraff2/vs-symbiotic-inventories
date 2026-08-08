@@ -70,6 +70,20 @@ namespace SymbioticInventories
             api.Input.SetHotKeyHandler(GuiDialogMasterInventory.FocusHotkeyCode, _ => window.ToggleDockFocus());
             api.Gui.RegisterDialog(window);
 
+            // Also open on the vanilla inventory key (E). A global listener rather than
+            // overriding the "inventorydialog" handler, so the normal inventory/character
+            // screen (armour slots) is never suppressed - this is purely additive. Fires
+            // anywhere, which is the point: mounted on an elk you cannot look at the bags.
+            api.Input.AddHotkeyListener((code, comb) =>
+            {
+                if (code != "inventorydialog" || !config.OpenOnInventoryKey) return;
+                if (!window.IsOpened())
+                {
+                    window.TryOpen();
+                    entityContainers.Discover();
+                }
+            });
+
             // Opening a chest has to bring the master window up, otherwise capturing it
             // would just make the container disappear with nowhere to show its contents.
             capture.OnCapturesChanged += OnCapturesChanged;

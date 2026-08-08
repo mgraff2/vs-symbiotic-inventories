@@ -51,6 +51,13 @@ namespace SymbioticInventories.Core
         public bool SortFoodByFreshness { get; set; } = false;
 
         /// <summary>
+        /// Also open the master window when the vanilla inventory key (E) is pressed - handy
+        /// when mounted and unable to look at the animal's saddlebags. Additive: the normal
+        /// inventory/character screen still opens too.
+        /// </summary>
+        public bool OpenOnInventoryKey { get; set; } = true;
+
+        /// <summary>
         /// Show the inventory of the mount the player is riding (elk saddlebags, etc.) in the
         /// master window automatically, without opening it by hand.
         /// </summary>

@@ -84,6 +84,8 @@ namespace SymbioticInventories.Gui
                 .BeginChildElements(bgBounds);
 
             yc = 0;
+            SwitchRow("invKeySwitch", "symbioticinventories:opt-invkey",
+                v => { config.OpenOnInventoryKey = v; onChanged?.Invoke(); }, "symbioticinventories:opt-invkey-hint");
             SwitchRow("adjacentSwitch", "symbioticinventories:opt-adjacent", OnToggleAdjacent, "symbioticinventories:opt-adjacent-hint");
             SliderRow("radiusSlider", "symbioticinventories:opt-adjacent-radius", OnRadiusChanged);
 
@@ -104,6 +106,7 @@ namespace SymbioticInventories.Gui
 
             SingleComposer = c.EndChildElements().Compose();
 
+            SingleComposer.GetSwitch("invKeySwitch").On = config.OpenOnInventoryKey;
             SingleComposer.GetSwitch("adjacentSwitch").On = config.OpenAdjacentChests;
             SingleComposer.GetSlider("radiusSlider").SetValues(
                 Math.Clamp(config.AdjacentOpenRadius, 1, 3), 1, 3, 1, " " + Lang.Get("symbioticinventories:blocks-unit"));

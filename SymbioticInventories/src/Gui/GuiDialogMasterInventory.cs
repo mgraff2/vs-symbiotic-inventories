@@ -518,33 +518,62 @@ namespace SymbioticInventories.Gui
         /// it - exactly the "falls behind the items" bug. Drawing after base.OnFinalizeFrame
         /// puts it above them. Above the cursor, too, so it never fights the item tooltip.
         /// </summary>
+        private bool hoverRenderFailed;
+
         public override void OnFinalizeFrame(float deltaTime)
         {
             base.OnFinalizeFrame(deltaTime);
-            if (!IsOpened()) return;
+            if (!IsOpened() || hoverRenderFailed) return;
 
-            var hovered = capi.World?.Player?.InventoryManager?.CurrentHoveredSlot;
-            if (hovered == null || !slotToSection.TryGetValue(hovered, out var s)) return;
-
-            string key = "#" + s.Number + " " + s.Label;
-            if (hoverTex == null || hoverTexKey != key)
+            // The whole body is guarded: this is unverifiable render code (I cannot test the
+            // GL path headlessly), and a throw in OnFinalizeFrame takes the ENTIRE client down
+            // - which it already did once. A hover label is never worth a crash, so on any
+            // failure we log once and permanently disable the label, never the game.
+            try
             {
-                hoverTex?.Dispose();
-                hoverTex = capi.Gui.TextTexture.GenTextTexture(key, CairoFont.WhiteSmallText(),
-                    new TextBackground
-                    {
-                        FillColor = GuiStyle.DialogStrongBgColor,
-                        Padding = 5,
-                        Radius = 3,
-                        Shade = true
-                    });
-                hoverTexKey = key;
-            }
+                var hovered = capi.World?.Player?.InventoryManager?.CurrentHoveredSlot;
+                if (hovered == null || !slotToSection.TryGetValue(hovered, out var s)) return;
 
-            float x = capi.Input.MouseX + 12;
-            float y = capi.Input.MouseY - hoverTex.Height - 10;
-            if (y < 0) y = capi.Input.MouseY + 24;
-            capi.Render.Render2DTexturePremultipliedAlpha(hoverTex.TextureId, x, y, hoverTex.Width, hoverTex.Height);
+                string key = "#" + s.Number + " " + s.Label;
+                if (hoverTex == null || hoverTexKey != key)
+                {
+                    hoverTex?.Dispose();
+                    hoverTex = capi.Gui.TextTexture.GenTextTexture(key, CairoFont.WhiteSmallText(),
+                        new TextBackground
+                        {
+                            FillColor = GuiStyle.DialogStrongBgColor,
+                            Padding = 5,
+                            Radius = 3,
+                            Shade = true
+                        });
+                    hoverTexKey = key;
+                }
+
+                float x = capi.Input.MouseX + 12;
+                float y = capi.Input.MouseY - hoverTex.Height - 10;
+                if (y < 0) y = capi.Input.MouseY + 24;
+
+                // The GUI shader is NOT bound here: base already ran composer.PostRender, which
+                // binds the gui shader, draws the item sprites, then stops it - so rendering
+                // raw threw "Can't set uniform on not active shader gui" and crashed the
+                // client. Bind it ourselves around the draw; the GUI ortho projection base set
+                // up is still current, so position stays correct.
+                var guiShader = capi.Render.GetEngineShader(EnumShaderProgram.Gui);
+                guiShader.Use();
+                try
+                {
+                    capi.Render.Render2DTexturePremultipliedAlpha(hoverTex.TextureId, x, y, hoverTex.Width, hoverTex.Height);
+                }
+                finally
+                {
+                    guiShader.Stop();
+                }
+            }
+            catch (Exception e)
+            {
+                hoverRenderFailed = true;
+                capi.Logger.Warning("[SymbioticInventories] Hover label disabled after render error: {0}", e);
+            }
         }
 
         public override void Dispose()

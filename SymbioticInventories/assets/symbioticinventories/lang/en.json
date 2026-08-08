@@ -17,5 +17,9 @@
   "dock-locked": "docked",
   "dock-focused": "docked (cursor)",
   "btn-dock": "Dock left",
-  "btn-float": "Float window"
+  "btn-float": "Float window",
+  "btn-options": "Options",
+  "options-title": "Symbiotic Inventories - Options",
+  "opt-adjacent": "Open adjacent chests together",
+  "opt-adjacent-hint": "One right-click on a chest also opens every touching chest of the same kind, docking the whole wall into the window at once. Locked or claimed chests stay shut."
 }

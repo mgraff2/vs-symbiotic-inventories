@@ -5,6 +5,7 @@ using System.Reflection;
 using HarmonyLib;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using SymbioticInventories.Core;
 using Vintagestory.API.Common.Entities;
 using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
@@ -33,20 +34,31 @@ namespace SymbioticInventories.Integration
 
         private ICoreClientAPI capi;
         private ILogger logger;
+        private ModConfig config;
         private long sequence;
 
         private readonly Dictionary<GuiDialog, CapturedDialog> captured = new();
+
+        /// <summary>
+        /// Positions whose dialogs we opened ourselves via chain-open. A capture at one of
+        /// these must not chain again, or one click on a chest wall would cascade forever.
+        /// </summary>
+        private readonly HashSet<BlockPos> autoOpened = new();
+
+        /// <summary>Ceiling on how many neighbours one click may open.</summary>
+        private const int MaxChainOpen = 8;
 
         /// <summary>Raised whenever the set of captured dialogs changes, so the window can recompose.</summary>
         public event Action OnCapturesChanged;
 
         public IEnumerable<CapturedDialog> Captured => captured.Values.OrderBy(c => c.Sequence);
 
-        public void Start(ICoreClientAPI api, Harmony harmony, ILogger log)
+        public void Start(ICoreClientAPI api, Harmony harmony, ILogger log, ModConfig cfg)
         {
             instance = this;
             capi = api;
             logger = log;
+            config = cfg;
 
             PatchDialog(harmony, BlockDialogType);
             PatchDialog(harmony, CreatureDialogType);
@@ -65,7 +77,14 @@ namespace SymbioticInventories.Integration
         /// <summary>Releases captured dialogs that are no longer open, whatever route closed them.</summary>
         private void SweepClosed()
         {
-            if (captured.Count == 0) return;
+            // Stale chain-open markers (a locked chest the server refused, a despawned block)
+            // would each silently suppress one future chain. With nothing captured there is
+            // nothing in flight, so the set can be safely emptied.
+            if (captured.Count == 0)
+            {
+                autoOpened.Clear();
+                return;
+            }
 
             List<GuiDialog> dead = null;
             foreach (var dlg in captured.Keys)
@@ -144,6 +163,88 @@ namespace SymbioticInventories.Integration
             ParkOffscreen(dlg);
 
             OnCapturesChanged?.Invoke();
+
+            if (cap.BlockPosition != null) MaybeChainOpen(cap.BlockPosition);
+        }
+
+        /// <summary>
+        /// One click, whole chest wall: when the player opens a block container, also open
+        /// every *touching* container whose block entity is the same type, so the cluster
+        /// docks into the master window together.
+        ///
+        /// Fully client-side: each neighbour block's own OnBlockInteractStart is invoked
+        /// locally, exactly as a right-click would - the block runs its complete open flow
+        /// (client dialog + Open packet to the server, which registers the open and syncs
+        /// the inventory). Because it is the block's own code path, modded containers work
+        /// unmodified, and the server still enforces range, locks and land claims - a chest
+        /// we may not open simply does not open.
+        ///
+        /// Same-type matching is what keeps this conservative: a firepit or quern touching
+        /// the chest is a different block entity type and is never chained.
+        /// </summary>
+        private void MaybeChainOpen(BlockPos origin)
+        {
+            if (config?.OpenAdjacentChests != true) return;
+
+            // This capture is one we triggered: consume the marker, do not cascade.
+            if (autoOpened.Remove(origin)) return;
+
+            var originBe = capi.World.BlockAccessor.GetBlockEntity(origin);
+            if (originBe == null) return;
+            var kind = originBe.GetType();
+
+            // Contiguous same-kind cluster around the clicked chest, breadth-first.
+            var toOpen = new List<BlockPos>();
+            var visited = new HashSet<BlockPos> { origin.Copy() };
+            var queue = new Queue<BlockPos>();
+            queue.Enqueue(origin);
+
+            while (queue.Count > 0 && toOpen.Count < MaxChainOpen)
+            {
+                var p = queue.Dequeue();
+                foreach (var face in BlockFacing.ALLFACES)
+                {
+                    var np = p.AddCopy(face);
+                    if (!visited.Add(np)) continue;
+
+                    var nbe = capi.World.BlockAccessor.GetBlockEntity(np);
+                    if (nbe == null || nbe.GetType() != kind) continue;
+                    if (IsCapturedAt(np)) continue;
+
+                    toOpen.Add(np);
+                    queue.Enqueue(np);
+                }
+            }
+
+            foreach (var p in toOpen)
+            {
+                autoOpened.Add(p.Copy());
+                try
+                {
+                    var block = capi.World.BlockAccessor.GetBlock(p);
+                    var sel = new BlockSelection
+                    {
+                        Position = p.Copy(),
+                        Face = BlockFacing.UP,
+                        HitPosition = new Vec3d(0.5, 0.5, 0.5)
+                    };
+                    block.OnBlockInteractStart(capi.World, capi.World.Player, sel);
+                }
+                catch (Exception e)
+                {
+                    autoOpened.Remove(p);
+                    logger.Warning("[SymbioticInventories] Chain-open of {0} failed: {1}", p, e.Message);
+                }
+            }
+        }
+
+        private bool IsCapturedAt(BlockPos pos)
+        {
+            foreach (var cap in captured.Values)
+            {
+                if (cap.BlockPosition != null && cap.BlockPosition.Equals(pos)) return true;
+            }
+            return false;
         }
 
         private void Release(GuiDialog dlg)

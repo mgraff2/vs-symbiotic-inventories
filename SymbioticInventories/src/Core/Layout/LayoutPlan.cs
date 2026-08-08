@@ -19,11 +19,15 @@ namespace SymbioticInventories.Core.Layout
         /// <summary>Caption strip above each section's grid.</summary>
         public const double HeaderH = 24;
 
-        /// <summary>Gap between neighbouring sections on the same shelf.</summary>
-        public const double BoxGapX = 10;
+        /// <summary>
+        /// Gap between neighbouring sections. 10 proved too thin in-game: with low-alpha
+        /// plates side by side, four backpack sections read as one smear ("bleeding into
+        /// each other"). 16 plus a border stroke makes each section a distinct card.
+        /// </summary>
+        public const double BoxGapX = 16;
 
         /// <summary>Gap between shelves within a band.</summary>
-        public const double BoxGapY = 10;
+        public const double BoxGapY = 16;
 
         /// <summary>Gap between bands, plus room for the band caption.</summary>
         public const double BandCaptionH = 20;

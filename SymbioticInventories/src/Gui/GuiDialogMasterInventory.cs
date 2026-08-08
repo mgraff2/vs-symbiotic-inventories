@@ -42,6 +42,9 @@ namespace SymbioticInventories.Gui
         /// <summary>Docked only: whether the player currently has the cursor in the window.</summary>
         private bool dockFocused;
 
+        /// <summary>Opens the options dialog. Wired by the mod system.</summary>
+        public Action OpenOptions;
+
         private const string ChromeKey = "chrome";
         private const string ScrollKey = "scrollbar";
 
@@ -360,6 +363,10 @@ namespace SymbioticInventories.Gui
             composer.AddSmallButton(
                 Lang.Get(mode == LayoutMode.DockLeft ? "symbioticinventories:btn-float" : "symbioticinventories:btn-dock"),
                 OnToggleMode, btn, EnumButtonStyle.Normal);
+
+            var optBtn = ElementBounds.Fixed(x + 138, y + 2, 110, 24);
+            composer.AddSmallButton(Lang.Get("symbioticinventories:btn-options"),
+                () => { OpenOptions?.Invoke(); return true; }, optBtn, EnumButtonStyle.Normal);
         }
 
         private bool OnToggleMode()
@@ -397,8 +404,12 @@ namespace SymbioticInventories.Gui
             // element's OWN surface, whose origin is the viewport's top-left - so the origin
             // is local zero shifted back by viewport start and scroll. The surface is only as
             // big as its region, so Cairo clips the overspill for us.
+            // All layout coordinates are unscaled GUI units; Cairo surfaces are raw (scaled)
+            // pixels. Everything drawn here multiplies through by the GUI scale - at scale 1
+            // the omission is invisible, at 1.25+ every plate would drift off its grid.
+            double g = RuntimeEnv.GUIScale;
             double ox = pinned ? bounds.drawX : 0;
-            double oy = pinned ? bounds.drawY : -scrollStart - scrollY;
+            double oy = pinned ? bounds.drawY : (-scrollStart - scrollY) * g;
 
             foreach (var band in plan.Bands)
             {
@@ -408,59 +419,70 @@ namespace SymbioticInventories.Gui
                 {
                     ctx.SetSourceRGBA(0.82, 0.79, 0.72, 0.75);
                     ctx.SelectFontFace(GuiStyle.StandardFontName, FontSlant.Normal, FontWeight.Bold);
-                    ctx.SetFontSize(12);
-                    ctx.MoveTo(ox, oy + band.Y + 13);
+                    ctx.SetFontSize(12 * g);
+                    ctx.MoveTo(ox, oy + (band.Y + 13) * g);
                     ctx.ShowText((band.Title ?? "").ToUpperInvariant());
                 }
 
-                foreach (var box in band.Boxes) DrawSectionPlate(ctx, ox, oy, box);
+                foreach (var box in band.Boxes) DrawSectionPlate(ctx, ox, oy, box, g);
             }
         }
 
         /// <summary>
-        /// A section's backing plate, accent spine and number badge.
+        /// A section's backing plate, border, accent spine and number badge.
         ///
         /// The tint is deliberately weak - it has to survive behind item sprites without
-        /// making them hard to read, so the badge and the spine carry the identification and
-        /// colour is only the fast secondary cue.
+        /// making them hard to read - so the border and badge carry the section boundary.
+        /// Narrow sections (under six columns) get no caption text at all: four backpacks
+        /// side by side each writing their full name produced one continuous smear of text
+        /// ("bleeding into each other"); the badge plus the legend rail carry the name.
         /// </summary>
-        private void DrawSectionPlate(Context ctx, double ox, double oy, LayoutBox box)
+        private void DrawSectionPlate(Context ctx, double ox, double oy, LayoutBox box, double g)
         {
             var s = box.Section;
             var a = s.Accent;
 
-            double x = ox + box.X;
-            double y = oy + box.Y;
-            double w = box.W;
-            double h = box.H;
+            double x = ox + box.X * g;
+            double y = oy + box.Y * g;
+            double w = box.W * g;
+            double h = box.H * g;
 
             ctx.SetSourceRGBA(a[0], a[1], a[2], 0.15);
-            GuiElement.RoundRectangle(ctx, x, y, w, h, 3);
+            GuiElement.RoundRectangle(ctx, x, y, w, h, 3 * g);
             ctx.Fill();
+
+            // Border stroke: the boundary cue the low-alpha fill cannot provide.
+            ctx.SetSourceRGBA(a[0], a[1], a[2], 0.55);
+            ctx.LineWidth = 1.5 * g;
+            GuiElement.RoundRectangle(ctx, x, y, w, h, 3 * g);
+            ctx.Stroke();
 
             ctx.SetSourceRGBA(a[0], a[1], a[2], 0.85);
-            GuiElement.RoundRectangle(ctx, x, y, 3, h, 1);
+            GuiElement.RoundRectangle(ctx, x, y, 3 * g, h, 1 * g);
             ctx.Fill();
 
-            double textX = x + 8;
+            double textX = x + 8 * g;
             if (s.Numbered)
             {
-                DrawBadge(ctx, x + 8, y + 3, 17, s.Number, a);
-                textX = x + 8 + 17 + 7;
+                DrawBadge(ctx, x + 8 * g, y + 3 * g, 17 * g, s.Number, a);
+                textX = x + (8 + 17 + 7) * g;
             }
+
+            // Caption only where there is honestly room for one.
+            if (box.W < 6 * LayoutMetrics.Cell) return;
 
             string caption = s.SubLabel == null ? s.Label : s.Label + "  -  " + s.SubLabel;
             ctx.SetSourceRGBA(0.94, 0.91, 0.86, 0.94);
             ctx.SelectFontFace(GuiStyle.StandardFontName, FontSlant.Normal, FontWeight.Normal);
-            ctx.SetFontSize(12.5);
-            ctx.MoveTo(textX, y + 16);
-            ctx.ShowText(Truncate(ctx, caption, w - (textX - x) - 6));
+            ctx.SetFontSize(12.5 * g);
+            ctx.MoveTo(textX, y + 16 * g);
+            ctx.ShowText(Truncate(ctx, caption, w - (textX - x) - 6 * g));
         }
 
         private static void DrawBadge(Context ctx, double x, double y, double size, int number, double[] accent)
         {
             ctx.SetSourceRGBA(accent[0], accent[1], accent[2], 0.96);
-            GuiElement.RoundRectangle(ctx, x, y, size, size, 3);
+            GuiElement.RoundRectangle(ctx, x, y, size, size, size * 0.18);
             ctx.Fill();
 
             ctx.SetSourceRGBA(0.06, 0.05, 0.04, 1);
@@ -474,29 +496,30 @@ namespace SymbioticInventories.Gui
 
         private void DrawLegend(Context ctx, ElementBounds bounds)
         {
-            double x = bounds.drawX + 4;
-            double y = bounds.drawY + 6;
+            double g = RuntimeEnv.GUIScale;
+            double x = bounds.drawX + 4 * g;
+            double y = bounds.drawY + 6 * g;
 
             ctx.SetSourceRGBA(0.94, 0.91, 0.86, 0.96);
             ctx.SelectFontFace(GuiStyle.StandardFontName, FontSlant.Normal, FontWeight.Bold);
-            ctx.SetFontSize(13);
-            ctx.MoveTo(x, y + 12);
+            ctx.SetFontSize(13 * g);
+            ctx.MoveTo(x, y + 12 * g);
             ctx.ShowText(Lang.Get("symbioticinventories:legend-title"));
-            y += 24;
+            y += 24 * g;
 
             foreach (var s in sections)
             {
                 if (!s.Numbered) continue;
 
-                DrawBadge(ctx, x, y, 14, s.Number, s.Accent);
+                DrawBadge(ctx, x, y, 14 * g, s.Number, s.Accent);
 
                 ctx.SetSourceRGBA(0.90, 0.88, 0.83, 0.92);
                 ctx.SelectFontFace(GuiStyle.StandardFontName, FontSlant.Normal, FontWeight.Normal);
-                ctx.SetFontSize(12);
-                ctx.MoveTo(x + 21, y + 11);
-                ctx.ShowText(Truncate(ctx, s.Label, RailW - 34));
+                ctx.SetFontSize(12 * g);
+                ctx.MoveTo(x + 21 * g, y + 11 * g);
+                ctx.ShowText(Truncate(ctx, s.Label, (RailW - 34) * g));
 
-                y += 19;
+                y += 19 * g;
             }
         }
 

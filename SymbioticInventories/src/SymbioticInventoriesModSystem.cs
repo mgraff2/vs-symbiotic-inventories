@@ -16,6 +16,8 @@ namespace SymbioticInventories
         private ICoreClientAPI capi;
         private DialogCaptureService capture;
         private GuiDialogMasterInventory window;
+        private GuiDialogOptions options;
+        private ModConfig config;
 
         public override bool ShouldLoad(EnumAppSide side) => side == EnumAppSide.Client;
 
@@ -23,12 +25,22 @@ namespace SymbioticInventories
         {
             capi = api;
 
+            // A corrupt config file must not stop the mod from loading - fall back to
+            // defaults and let the next save overwrite the broken file.
+            try { config = api.LoadModConfig<ModConfig>(ModConfig.Filename); }
+            catch (System.Exception e) { Mod.Logger.Warning("[SymbioticInventories] Bad config, using defaults: {0}", e.Message); }
+            config ??= new ModConfig();
+            api.StoreModConfig(config, ModConfig.Filename);
+
             harmony = new Harmony(HarmonyId);
             capture = new DialogCaptureService();
-            capture.Start(api, harmony, Mod.Logger);
+            capture.Start(api, harmony, Mod.Logger, config);
 
             var registry = new SectionRegistry(api, capture);
             window = new GuiDialogMasterInventory(api, registry);
+            options = new GuiDialogOptions(api, config, () => api.StoreModConfig(config, ModConfig.Filename));
+            window.OpenOptions = () => options.TryOpen();
+            api.Gui.RegisterDialog(options);
 
             api.Input.RegisterHotKey(
                 GuiDialogMasterInventory.HotkeyCode,

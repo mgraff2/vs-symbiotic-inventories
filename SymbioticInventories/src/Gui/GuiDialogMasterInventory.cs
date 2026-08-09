@@ -710,6 +710,24 @@ namespace SymbioticInventories.Gui
             composer.EndChildElements();
             SingleComposer = composer.Compose();
 
+            // The engine remembers dragged dialog positions by composer key and restores
+            // them on every compose. An offset stored while the window was SMALL (solo bag
+            // block) shoves a since-grown window - a chain-opened chest wall is nearly
+            // screen-wide - half off the screen. The window belongs in view, always: if the
+            // restored position leaves any edge off-screen, discard it and recenter. A
+            // deliberate drag of a window that still fits is left alone.
+            {
+                var db = SingleComposer.Bounds;
+                if (db.absX < 0 || db.absY < 0
+                    || db.absX + db.OuterWidth > capi.Render.FrameWidth + 1
+                    || db.absY + db.OuterHeight > capi.Render.FrameHeight + 1)
+                {
+                    db.fixedOffsetX = 0;
+                    db.fixedOffsetY = 0;
+                    db.CalcWorldBounds();
+                }
+            }
+
             if (scrolls)
             {
                 SingleComposer.GetScrollbar(ScrollKey)?.SetHeights((float)viewportH, (float)contentH);

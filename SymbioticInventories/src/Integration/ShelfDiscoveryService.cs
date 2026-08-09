@@ -157,52 +157,176 @@ namespace SymbioticInventories.Integration
             return sig;
         }
 
+        // ---- bulk transfer pump ---------------------------------------------------
+        //
+        // FoodShelves moves ONE item per interaction, so bulk amounts (a 1000-flour sack)
+        // are transferred the way a patient player would: by clicking repeatedly. The pump
+        // batches a few interactions per beat and watches for progress; when nothing
+        // changes for a few beats (sack full, sack empty, inventory exhausted, server
+        // said no) it stops. Every step is an ordinary server-validated operation.
+
+        private class TransferJob
+        {
+            public AmbientShelf Shelf;
+            public int Slot;
+            public bool Deposit;
+            public bool FromWholeInventory;   // shift-deposit: keep refilling from the bags
+            public ItemStack Match;           // what we are pouring (for refills)
+            public int RestoreHotbarIndex = -1;
+            public int Guard;
+            public long LastSig = long.MinValue;
+            public int StaleBeats;
+        }
+
+        private TransferJob job;
+
         /// <summary>
-        /// A click on a shelf cell. Empty cursor: plain take (the real interaction pulls
-        /// the item into the player's inventory). Carrying a stack: deposit it - "treat it
-        /// like any grid slot" (user ask) - via the hotbar shuttle below.
+        /// A click on a shelf cell:
+        ///   click, empty cursor        -> take one (the mod's native behaviour)
+        ///   SHIFT-click, empty cursor  -> drain the cell into the player's bags
+        ///   click, carrying a stack    -> deposit the whole carried stack
+        ///   SHIFT-click, carrying      -> deposit it AND every matching stack in the bags
         /// </summary>
         public void InteractCell(AmbientShelf shelf, int slotIndex)
         {
+            if (job != null) return;   // one transfer at a time
+
+            bool shift = capi.Input.KeyboardKeyState[(int)GlKeys.LShift]
+                      || capi.Input.KeyboardKeyState[(int)GlKeys.RShift];
             var mouse = capi.World.Player?.InventoryManager?.MouseItemSlot;
-            if (mouse != null && !mouse.Empty)
+            bool carrying = mouse != null && !mouse.Empty;
+
+            if (!carrying && !shift) { Interact(shelf, slotIndex); return; }
+
+            if (!carrying)
             {
-                DepositCarried(shelf, slotIndex);
+                // Bulk take: no hand involvement, items land in the player's inventory.
+                job = new TransferJob { Shelf = shelf, Slot = slotIndex, Deposit = false };
+                Pump(0);
                 return;
             }
-            Interact(shelf, slotIndex);
-        }
 
-        /// <summary>
-        /// Deposits the MOUSE-CARRIED stack into a shelf cell. The block's put interaction
-        /// only consumes from the ACTIVE HOTBAR hand, so the carried stack shuttles
-        /// through it: swap carried into the active hotbar slot (an ordinary,
-        /// server-validated slot click - the sorter's old recipe, verified against
-        /// GuiElementItemSlotGridBase.SlotClick IL), fire the real put interaction, then
-        /// swap the leftover back to the cursor. All three travel one ordered channel, so
-        /// the server always applies swap -> put -> swap-back in sequence; the swap-back
-        /// waits a beat so its client-side prediction runs against the server-corrected
-        /// hand contents instead of the stale full stack.
-        /// </summary>
-        private void DepositCarried(AmbientShelf shelf, int slotIndex)
-        {
-            var player = capi.World.Player;
-            var im = player.InventoryManager;
+            // Deposit: the put interaction consumes from the ACTIVE HOTBAR hand, so use an
+            // EMPTY hotbar slot as the working hand (no tool gets displaced), drop the
+            // carried stack into it, and let the pump click away. The cursor doubles as
+            // the refill register for shift-deposits.
+            var im = capi.World.Player.InventoryManager;
             var hotbar = im.GetHotbarInventory();
-            int active = im.ActiveHotbarSlotNumber;
-            if (hotbar == null || active < 0) { Interact(shelf, slotIndex); return; }
-
-            void SwapHand()
+            int empty = -1;
+            for (int i = 0; i < 10 && i < hotbar.Count; i++)
             {
-                var op = new ItemStackMoveOperation(capi.World, EnumMouseButton.Left,
-                    0, (EnumMergePriority)0, 0) { ActingPlayer = player };
-                var packet = hotbar.ActivateSlot(active, im.MouseItemSlot, ref op);
-                if (packet != null) capi.Network.SendPacketClient(packet);
+                if (hotbar[i].Empty) { empty = i; break; }
+            }
+            if (empty < 0)
+            {
+                logger.Notification("[SymbioticInventories] Bulk deposit needs one empty hotbar slot.");
+                return;
             }
 
-            SwapHand();                        // carried -> hand, old hand -> cursor
-            Interact(shelf, slotIndex);        // server: FoodShelves TryPut from the hand
-            capi.Event.RegisterCallback(_ => SwapHand(), 450);   // leftover -> cursor, hand restored
+            job = new TransferJob
+            {
+                Shelf = shelf,
+                Slot = slotIndex,
+                Deposit = true,
+                FromWholeInventory = shift,
+                Match = mouse.Itemstack.Clone(),
+                RestoreHotbarIndex = im.ActiveHotbarSlotNumber
+            };
+            im.ActiveHotbarSlotNumber = empty;
+            ClickSlot(hotbar, empty);          // carried stack -> working hand
+            Pump(0);
+        }
+
+        /// <summary>One beat: a small batch of interactions, then re-arm. Progress is
+        /// measured on the client-synced inventories; three still beats end the job.</summary>
+        private void Pump(float dt)
+        {
+            if (job == null) return;
+            var im = capi.World.Player.InventoryManager;
+            var hotbar = im.GetHotbarInventory();
+            var hand = hotbar[im.ActiveHotbarSlotNumber];
+
+            long sig = 17;
+            foreach (var s in job.Shelf.Inventory) sig = sig * 31 + (s?.StackSize ?? 0);
+            sig = sig * 31 + (job.Deposit ? hand.StackSize : 0);
+
+            if (sig == job.LastSig)
+            {
+                if (++job.StaleBeats >= 3) { FinishJob(); return; }
+            }
+            else
+            {
+                job.StaleBeats = 0;
+                job.LastSig = sig;
+            }
+
+            for (int i = 0; i < 4; i++)
+            {
+                if (job.Deposit && hand.Empty)
+                {
+                    if (!job.FromWholeInventory || !RefillHand(hotbar, im.ActiveHotbarSlotNumber))
+                    {
+                        FinishJob();
+                        return;
+                    }
+                }
+                Interact(job.Shelf, job.Slot);
+                if (++job.Guard > 2000) { FinishJob(); return; }
+            }
+
+            capi.Event.RegisterCallback(Pump, 150);
+        }
+
+        /// <summary>Pulls the next stack matching the poured item from the player's bags
+        /// (or non-active hotbar slots) into the working hand: two ordinary clicks with the
+        /// cursor as the register. False when the inventory has no more to give.</summary>
+        private bool RefillHand(IInventory hotbar, int handIndex)
+        {
+            var im = capi.World.Player.InventoryManager;
+            var sources = new[]
+            {
+                im.GetOwnInventory(Vintagestory.API.Config.GlobalConstants.backpackInvClassName),
+                hotbar
+            };
+            foreach (var inv in sources)
+            {
+                if (inv == null) continue;
+                for (int i = 0; i < inv.Count; i++)
+                {
+                    if (inv == hotbar && i == handIndex) continue;
+                    var st = inv[i]?.Itemstack;
+                    if (st == null || !st.Satisfies(job.Match)) continue;
+                    ClickSlot(inv, i);              // stack -> cursor
+                    ClickSlot(hotbar, handIndex);   // cursor -> working hand
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>Leftover back to the cursor, original hotbar selection restored.</summary>
+        private void FinishJob()
+        {
+            var j = job;
+            job = null;
+            if (j == null || !j.Deposit) return;
+
+            var im = capi.World.Player.InventoryManager;
+            var hotbar = im.GetHotbarInventory();
+            int hand = im.ActiveHotbarSlotNumber;
+            if (!hotbar[hand].Empty) ClickSlot(hotbar, hand);   // leftover -> cursor
+            if (j.RestoreHotbarIndex >= 0) im.ActiveHotbarSlotNumber = j.RestoreHotbarIndex;
+        }
+
+        /// <summary>An ordinary slot click with the mouse-cursor slot - the exact packets a
+        /// real click sends (recipe verified against GuiElementItemSlotGridBase.SlotClick).</summary>
+        private void ClickSlot(IInventory inv, int slotId)
+        {
+            var player = capi.World.Player;
+            var op = new ItemStackMoveOperation(capi.World, EnumMouseButton.Left,
+                0, (EnumMergePriority)0, 0) { ActingPlayer = player };
+            var packet = inv.ActivateSlot(slotId, player.InventoryManager.MouseItemSlot, ref op);
+            if (packet != null) capi.Network.SendPacketClient(packet);
         }
 
         /// <summary>

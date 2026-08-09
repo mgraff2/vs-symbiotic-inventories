@@ -93,36 +93,41 @@ namespace SymbioticInventories.Core.Layout
                 else offBody.Add(s);
             }
 
+            // Saddlebags render as TWO adjacent rows, not one long line - a 12-slot bag is
+            // a squat 6x2, so it neither widens the block past the worn bags nor reads as
+            // one endless strip.
+            static int MountW(InventorySection s) => (s.SlotCount + 1) / 2;
+
             // Left-block width: the biggest line, capped by the window (oversized wraps).
             int blockW = 0;
             foreach (var s in bags) blockW = Math.Max(blockW, Math.Min(s.SlotCount, cols));
-            foreach (var s in mounts) blockW = Math.Max(blockW, Math.Min(s.SlotCount, cols));
+            foreach (var s in mounts) blockW = Math.Max(blockW, Math.Min(MountW(s), cols));
 
             // Just the player's own territory open: the window is exactly the left block.
             plan.Cols = (blockW > 0 && offBody.Count == 0) ? blockW : cols;
 
-            // ---- the left block: one section per line -----------------------------
+            // ---- the left block: one section per line (mounts: per 2-row brick) ----
             int leftRows = 0;
-            void AddLine(InventorySection s)
+            void AddLine(InventorySection s, int wrapW)
             {
                 int n = s.SlotCount;
                 var ribbon = new Ribbon { Section = s, StartCell = leftRows * plan.Cols };
 
-                int full = n / blockW;
+                int full = n / wrapW;
                 if (full > 0)
-                    ribbon.Slices.Add(new RibbonSlice { Row = leftRows, Col = 0, Cols = blockW, Rows = full, SlotOffset = 0 });
-                int tail = n - full * blockW;
+                    ribbon.Slices.Add(new RibbonSlice { Row = leftRows, Col = 0, Cols = wrapW, Rows = full, SlotOffset = 0 });
+                int tail = n - full * wrapW;
                 if (tail > 0)
-                    ribbon.Slices.Add(new RibbonSlice { Row = leftRows + full, Col = 0, Cols = tail, Rows = 1, SlotOffset = full * blockW });
+                    ribbon.Slices.Add(new RibbonSlice { Row = leftRows + full, Col = 0, Cols = tail, Rows = 1, SlotOffset = full * wrapW });
 
-                leftRows += (n + blockW - 1) / blockW;
+                leftRows += (n + wrapW - 1) / wrapW;
                 plan.Ribbons.Add(ribbon);
                 plan.TotalCells += n;
             }
 
-            foreach (var s in bags) AddLine(s);
+            foreach (var s in bags) AddLine(s, blockW);
             if (bags.Count > 0 && mounts.Count > 0) leftRows++;   // blank row: you / your mount
-            foreach (var s in mounts) AddLine(s);
+            foreach (var s in mounts) AddLine(s, Math.Min(MountW(s), blockW));
 
             plan.Rows = leftRows;
             if (offBody.Count == 0) return plan;
@@ -222,7 +227,8 @@ namespace SymbioticInventories.Core.Layout
             foreach (var s in flow)
             {
                 if (s.SlotCount <= 0) continue;
-                if (IsLeftBlock(s.Kind)) blockW = Math.Max(blockW, s.SlotCount);
+                if (s.Kind == SectionKind.Mount) blockW = Math.Max(blockW, (s.SlotCount + 1) / 2);
+                else if (IsLeftBlock(s.Kind)) blockW = Math.Max(blockW, s.SlotCount);
                 else off = true;
             }
             if (blockW == 0 || !off) return cols;

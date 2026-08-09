@@ -187,6 +187,14 @@ namespace SymbioticInventories.Integration
             /// <summary>Sack total last beat: a deposit that sees the total DROP has
             /// started taking - stop instantly.</summary>
             public int LastSackTotal = -1;
+
+            /// <summary>For takes: stop after this many items (0 = drain). A plain click
+            /// lifts one full stack's worth - vessel-like - a shift-click empties the cell.</summary>
+            public int TakeLimit;
+
+            /// <summary>Interactions fired, the precise cap for limited takes (one item
+            /// per interaction is the mod's own rate).</summary>
+            public int Fired;
         }
 
         private TransferJob job;
@@ -207,12 +215,22 @@ namespace SymbioticInventories.Integration
             var mouse = capi.World.Player?.InventoryManager?.MouseItemSlot;
             bool carrying = mouse != null && !mouse.Empty;
 
-            if (!carrying && !shift) { Interact(shelf, slotIndex); return; }
-
             if (!carrying)
             {
-                // Bulk take: no hand involvement, items land in the player's inventory.
-                job = new TransferJob { Shelf = shelf, Slot = slotIndex, Deposit = false };
+                // Vessel-like takes: a plain click on a filled cell lifts one full stack's
+                // worth, shift drains the cell. Either way the items land in the BAGS -
+                // the interaction can only deliver to the inventory, never the cursor;
+                // that is the one visible seam a client-side mod cannot close.
+                var cellStack = slotIndex < shelf.Inventory.Count ? shelf.Inventory[slotIndex]?.Itemstack : null;
+                if (cellStack == null) { Interact(shelf, slotIndex); return; }   // empty cell: native click
+
+                job = new TransferJob
+                {
+                    Shelf = shelf,
+                    Slot = slotIndex,
+                    Deposit = false,
+                    TakeLimit = shift ? 0 : Math.Max(1, cellStack.Collectible?.MaxStackSize ?? 1)
+                };
                 Pump(0);
                 return;
             }
@@ -321,7 +339,13 @@ namespace SymbioticInventories.Integration
                     }
                     job.HandLedger--;
                 }
+                else if (job.TakeLimit > 0 && job.Fired >= job.TakeLimit)
+                {
+                    FinishJob();
+                    return;
+                }
                 Interact(job.Shelf, job.Slot);
+                job.Fired++;
                 if (++job.Guard > 2000) { FinishJob(); return; }
             }
 

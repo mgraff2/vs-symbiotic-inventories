@@ -234,66 +234,130 @@ namespace SymbioticInventories.Integration
             }
         }
 
-        // ---- fixed-count transfer stepper -----------------------------------------
+        // ---- native bulk gestures: the control-packet sandwich --------------------
         //
-        // Deterministic by construction (user spec after the adaptive pump proved
-        // inconsistent): every job fires a number of interactions decided UP FRONT -
-        // one per 30ms step, each a real server-validated block interaction - and stops
-        // early only on unambiguous client-visible facts (hand empty, cell empty). No
-        // batches, no refills, no progress heuristics.
+        // FoodShelves decides interaction QUANTITY server-side from two booleans on the
+        // player's controls: ShiftKey picks put-vs-take on bulk slots, CtrlKey picks
+        // whole-stack-vs-one. Those flags reach the server ONLY as tiny MoveKeyChange
+        // packets (Packet_Client Id=21) riding the SAME ordered TCP stream as the hand-
+        // interaction packet - so "flags down, interact, flags restored" is guaranteed to
+        // be processed in exactly that order, and ONE interaction moves a whole stack with
+        // the mod's own server-side rules. (Engine and FoodShelves 3.0.5 IL both verified
+        // by two independent reviews.) This replaced a 64-step interaction pump whose
+        // client-side state machine kept reversing deposits into takes - see git history.
 
-        private class TransferJob
+        private Type pktClientType, pktMoveType;
+        private FieldInfo pktIdField, pktMoveField, moveKeyField, moveDownField;
+        private bool forgeProbed, forgeOk;
+
+        private bool ForgeAvailable()
         {
-            public AmbientShelf Shelf;
-            public int Slot;
-            public bool Deposit;
+            if (forgeProbed) return forgeOk;
+            forgeProbed = true;
 
-            /// <summary>Interactions left to fire - fixed when the job starts.</summary>
-            public int Remaining;
+            pktClientType = AccessTools.TypeByName("Packet_Client");
+            pktMoveType = AccessTools.TypeByName("Packet_MoveKeyChange");
+            pktIdField = pktClientType == null ? null : AccessTools.Field(pktClientType, "Id");
+            pktMoveField = pktClientType == null ? null : AccessTools.Field(pktClientType, "MoveKeyChange");
+            moveKeyField = pktMoveType == null ? null : AccessTools.Field(pktMoveType, "Key");
+            moveDownField = pktMoveType == null ? null : AccessTools.Field(pktMoveType, "Down");
 
-            public int RestoreHotbarIndex = -1;
+            forgeOk = pktIdField != null && pktMoveField != null
+                   && moveKeyField != null && moveDownField != null;
+            if (!forgeOk)
+                logger.Warning("[SymbioticInventories] MoveKeyChange packet shape changed on this game build - shelf clicks fall back to single items.");
+            return forgeOk;
         }
 
-        private TransferJob job;
+        /// <summary>One MoveKeyChange packet: "this control flag is now down/up".</summary>
+        private void SendMoveKey(int key, bool down)
+        {
+            var move = Activator.CreateInstance(pktMoveType);
+            moveKeyField.SetValue(move, key);
+            moveDownField.SetValue(move, down ? 1 : 0);
+            var pkt = Activator.CreateInstance(pktClientType);
+            pktIdField.SetValue(pkt, 21);
+            pktMoveField.SetValue(pkt, move);
+            capi.Network.SendPacketClient(pkt);
+        }
 
         /// <summary>
-        /// A click on a shelf cell - reads intent from what the player is holding:
-        ///   holding a stack (active hotbar hand OR mouse cursor) -> POUR IT ALL IN
-        ///   empty-handed                                          -> take a full stack out
-        ///   SHIFT-click -> one single native interaction (moves 1; and with the mod's own
-        ///   sneak+sprint combo physically held it stays its native whole-stack gesture)
+        /// One native interaction with forged modifier flags. The client controls are
+        /// flipped only around the synchronous OnBlockInteractStart call (so client
+        /// prediction moves the same amount the server will), then restored before the
+        /// input tick can ever observe them; the server-side flags are restored to the
+        /// client's REAL current view, so physically held keys never desync. While
+        /// mounted the flags land on the seat's controls (exactly as physical keys do),
+        /// so the forge degrades to the plain single-item interaction there - parity
+        /// with the in-world gesture, not a regression.
         /// </summary>
-        public void InteractCell(AmbientShelf shelf, int slotIndex)
+        private void InteractForged(AmbientShelf shelf, int slotIndex, bool ctrl, bool shift)
         {
-            if (job != null) { FinishJob(); return; }   // a click during a transfer stops it
-
-            bool shift = capi.Input.KeyboardKeyState[(int)GlKeys.LShift]
-                      || capi.Input.KeyboardKeyState[(int)GlKeys.RShift];
-            if (shift) { Interact(shelf, slotIndex); return; }   // native single/combo gesture
-
-            var im = capi.World.Player.InventoryManager;
-            var mouse = im.MouseItemSlot;
-            var hotbar = im.GetHotbarInventory();
-            var hand = hotbar[im.ActiveHotbarSlotNumber];
-
-            // ---- deposit straight from the ACTIVE HAND (the natural in-world flow:
-            // "64 flour in my hand, click the sack") - no shuttling, the put interaction
-            // consumes from exactly where the stack already is.
-            if (!hand.Empty)
+            var player = capi.World.Player;
+            if (!ForgeAvailable() || player.Entity.MountedOn != null)
             {
-                job = new TransferJob
-                {
-                    Shelf = shelf,
-                    Slot = slotIndex,
-                    Deposit = true,
-                    Remaining = hand.StackSize
-                };
-                Step(0);
+                Interact(shelf, slotIndex);
                 return;
             }
 
-            // ---- deposit a MOUSE-CARRIED stack: shuttle it into an empty hotbar slot
-            // first (the interaction only consumes from the hand), then pour.
+            int ctrlKey = (int)EnumEntityAction.CtrlKey;
+            int shiftKey = (int)EnumEntityAction.ShiftKey;
+            SendMoveKey(ctrlKey, ctrl);
+            SendMoveKey(shiftKey, shift);
+
+            var controls = player.Entity.Controls;
+            bool c0 = controls.CtrlKey, s0 = controls.ShiftKey;
+            controls.CtrlKey = ctrl;
+            controls.ShiftKey = shift;
+            try
+            {
+                Interact(shelf, slotIndex);
+            }
+            finally
+            {
+                controls.CtrlKey = c0;
+                controls.ShiftKey = s0;
+                SendMoveKey(ctrlKey, c0);
+                SendMoveKey(shiftKey, s0);
+            }
+        }
+
+        /// <summary>
+        /// A click on a shelf cell. STATELESS - every gesture is exactly one native
+        /// interaction (no jobs, no timers, nothing a second click could reverse):
+        ///   holding a stack in the active hand -> pour the whole stack in (one op)
+        ///   stack on the mouse cursor          -> shuttle to a free hotbar slot, pour
+        ///   empty-handed                       -> take a whole stack out (one op)
+        ///   SHIFT-click                        -> move exactly ONE, either direction
+        /// </summary>
+        public void InteractCell(AmbientShelf shelf, int slotIndex)
+        {
+            bool shiftClick = capi.Input.KeyboardKeyState[(int)GlKeys.LShift]
+                           || capi.Input.KeyboardKeyState[(int)GlKeys.RShift];
+            var im = capi.World.Player.InventoryManager;
+            var hotbar = im.GetHotbarInventory();
+            var hand = hotbar[im.ActiveHotbarSlotNumber];
+            var mouse = im.MouseItemSlot;
+
+            // Shift-click: move exactly one - put if the hand holds something, else take.
+            if (shiftClick)
+            {
+                InteractForged(shelf, slotIndex, ctrl: false, shift: !hand.Empty);
+                return;
+            }
+
+            // Whole-stack pour straight from the active hand - the natural in-world flow.
+            if (!hand.Empty)
+            {
+                InteractForged(shelf, slotIndex, ctrl: true, shift: true);
+                return;
+            }
+
+            // Mouse-carried stack: one shuttle click into an empty hotbar slot (ordered on
+            // the same stream, so the server has the stack in hand before the interact),
+            // ONE forged pour, selection restored immediately (restoring a selection moves
+            // no items). Leftover - sack full - returns to the cursor after the server
+            // settles; with one op that is one small callback, not a state machine.
             if (mouse != null && !mouse.Empty)
             {
                 int empty = -1;
@@ -303,133 +367,39 @@ namespace SymbioticInventories.Integration
                 }
                 if (empty < 0)
                 {
-                    logger.Notification("[SymbioticInventories] Depositing needs one empty hotbar slot.");
+                    logger.Notification("[SymbioticInventories] Depositing from the cursor needs one empty hotbar slot (or hold the stack in your hand).");
                     return;
                 }
 
-                job = new TransferJob
-                {
-                    Shelf = shelf,
-                    Slot = slotIndex,
-                    Deposit = true,
-                    RestoreHotbarIndex = im.ActiveHotbarSlotNumber
-                };
+                int restore = im.ActiveHotbarSlotNumber;
                 im.ActiveHotbarSlotNumber = empty;
-                ClickSlot(hotbar, empty);          // carried stack -> working hand (applies locally)
-                job.Remaining = hotbar[empty].StackSize;
-                Step(0);
+                ClickSlot(hotbar, empty);   // carried -> working hand
+                try
+                {
+                    InteractForged(shelf, slotIndex, ctrl: true, shift: true);
+                }
+                finally
+                {
+                    im.ActiveHotbarSlotNumber = restore;
+                }
+
+                capi.Event.RegisterCallback(_ =>
+                {
+                    try
+                    {
+                        if (!hotbar[empty].Empty && im.MouseItemSlot.Empty) ClickSlot(hotbar, empty);
+                    }
+                    catch (Exception e)
+                    {
+                        logger.Warning("[SymbioticInventories] Leftover return failed: {0}", e.Message);
+                    }
+                }, 400);
                 return;
             }
 
-            // ---- empty-handed: take one full stack's worth, counted from the client view
-            // of the segment. Aimed at an empty hotbar slot so a hand-delivered take can
-            // land on the cursor at cleanup.
-            int per = Math.Max(1, shelf.ItemsPerSegment);
-            int segStart = slotIndex / per * per;
-            int inCell = 0;
-            int maxStack = 64;
-            for (int i = segStart; i < segStart + per && i < shelf.Inventory.Count; i++)
-            {
-                var st = shelf.Inventory[i]?.Itemstack;
-                if (st == null) continue;
-                inCell += st.StackSize;
-                maxStack = Math.Max(1, st.Collectible?.MaxStackSize ?? 64);
-            }
-            if (inCell == 0) { Interact(shelf, slotIndex); return; }   // empty cell: native click
-
-            job = new TransferJob
-            {
-                Shelf = shelf,
-                Slot = slotIndex,
-                Deposit = false,
-                Remaining = Math.Min(inCell, maxStack)
-            };
-            for (int i = 0; i < 10 && i < hotbar.Count; i++)
-            {
-                if (hotbar[i].Empty)
-                {
-                    job.RestoreHotbarIndex = im.ActiveHotbarSlotNumber;
-                    im.ActiveHotbarSlotNumber = i;
-                    break;
-                }
-            }
-            Step(0);
-        }
-
-        /// <summary>One step: one interaction, 30ms apart, until the fixed count is spent
-        /// or the client-visible state says the job cannot continue (deposit hand empty /
-        /// take cell empty). A throw cleans up instead of wedging the job.</summary>
-        private void Step(float dt)
-        {
-            try
-            {
-                if (job == null) return;
-                var im = capi.World.Player.InventoryManager;
-                var hand = im.GetHotbarInventory()[im.ActiveHotbarSlotNumber];
-
-                bool done = job.Remaining <= 0 || (job.Deposit && hand.Empty);
-                if (!done && !job.Deposit)
-                {
-                    int per = Math.Max(1, job.Shelf.ItemsPerSegment);
-                    int segStart = job.Slot / per * per;
-                    int inCell = 0;
-                    for (int i = segStart; i < segStart + per && i < job.Shelf.Inventory.Count; i++)
-                    {
-                        inCell += job.Shelf.Inventory[i]?.Itemstack?.StackSize ?? 0;
-                    }
-                    done = inCell == 0;
-                }
-                if (done) { FinishJob(); return; }
-
-                Interact(job.Shelf, job.Slot);
-                job.Remaining--;
-                capi.Event.RegisterCallback(Step, 30);
-            }
-            catch (Exception e)
-            {
-                logger.Warning("[SymbioticInventories] Transfer step failed: {0}", e.Message);
-                FinishJob();
-            }
-        }
-
-        /// <summary>
-        /// Ends the job now, but does the CLEANUP after the server settles: the final puts
-        /// are still in flight, so touching the working hand immediately picks up a ghost
-        /// stack the server is about to consume - corrections then fight the restore and
-        /// the whole hotbar feels wedged (real bug after a completed 188-flour pour). One
-        /// beat of quiet, then: leftover to the cursor (if the cursor is free), selection
-        /// restored, one log line saying what moved.
-        /// </summary>
-        private void FinishJob()
-        {
-            var j = job;
-            job = null;
-            if (j == null) return;
-            // Cleanup only applies when we SWITCHED to a working slot. A deposit poured
-            // straight from the player's real hand leaves its leftover exactly where it
-            // is - in their hand, where they put it.
-            if (j.RestoreHotbarIndex < 0) return;
-
-            int handIndex = capi.World.Player.InventoryManager.ActiveHotbarSlotNumber;
-            capi.Event.RegisterCallback(_ =>
-            {
-                try
-                {
-                    var im = capi.World.Player.InventoryManager;
-                    var hotbar = im.GetHotbarInventory();
-                    var hand = hotbar[handIndex];
-                    if (!hand.Empty)
-                    {
-                        if (im.MouseItemSlot.Empty) ClickSlot(hotbar, handIndex);   // leftover -> cursor
-                        else logger.Notification("[SymbioticInventories] Transfer leftover kept in hotbar slot {0} (cursor occupied).", handIndex + 1);
-                    }
-                    if (j.RestoreHotbarIndex >= 0) im.ActiveHotbarSlotNumber = j.RestoreHotbarIndex;
-                }
-                catch (Exception e)
-                {
-                    logger.Warning("[SymbioticInventories] Transfer cleanup failed: {0}", e.Message);
-                }
-            }, 700);
+            // Empty-handed: take a whole stack; FoodShelves itself delivers it to the
+            // player (hand or bags), server-side, like the native ctrl-gesture in-world.
+            InteractForged(shelf, slotIndex, ctrl: true, shift: false);
         }
 
         /// <summary>An ordinary slot click with the mouse-cursor slot - the exact packets a

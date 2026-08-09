@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Shelf clicks are now single native operations** (the control-packet sandwich). FoodShelves
+  decides quantity server-side from the Ctrl/Shift control flags; the mod sends those flag
+  packets around ONE synthesized interaction on the same ordered stream, so a click moves a
+  whole stack instantly with the mod's own rules - no more item-by-item counting, and a
+  second click can never reverse a deposit. Click with a stack in hand: pours it all in.
+  Empty-handed click: takes a full stack. Shift-click: moves one.
 - **FoodShelves integration.** Crock shelves, bread/pie/sushi/egg shelves, flour sacks,
   baskets, coolers and display cases within ~5 blocks join the unified grid as sections -
   each shelf keeps its REAL spatial arrangement (a 2x3 crock shelf is a rigid 2x3 brick in

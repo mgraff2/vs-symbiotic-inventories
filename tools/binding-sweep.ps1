@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Resolves the six API bindings Symbiotic Inventories depends on, against every cached
+    Resolves the seven API bindings Symbiotic Inventories depends on, against every cached
     game version.
 
 .DESCRIPTION
@@ -101,6 +101,30 @@ if ($GameDir) {
     if ($harv) { Check 'B6' 'field inv'        ($null -ne $harv.GetField('inv', $decl)) }
     Check 'B6' 'BlockEntityOpenableContainer'  ($null -ne $srv.GetType('Vintagestory.GameContent.BlockEntityOpenableContainer'))
 
+    # B7 - the control-packet sandwich (shelf bulk gestures). InteractForged sends
+    # MoveKeyChange packets (Packet_Client Id=21) so ONE synthesized interaction runs
+    # FoodShelves' whole-stack path. Losing these shapes means shelf clicks silently
+    # degrade to single items - annoying, guarded, but worth catching on an update.
+    $lib = [System.Reflection.Assembly]::LoadFrom("$GameDir\VintagestoryLib.dll")
+    $pc = $lib.GetType('Packet_Client')
+    $pm = $lib.GetType('Packet_MoveKeyChange')
+    Check 'B7' 'Packet_Client'             ($null -ne $pc)
+    if ($pc) {
+        Check 'B7' 'Packet_Client.Id'          ($null -ne $pc.GetField('Id'))
+        Check 'B7' 'Packet_Client.MoveKeyChange' ($null -ne $pc.GetField('MoveKeyChange'))
+    }
+    Check 'B7' 'Packet_MoveKeyChange'      ($null -ne $pm)
+    if ($pm) {
+        Check 'B7' 'Packet_MoveKeyChange.Key'  ($null -ne $pm.GetField('Key'))
+        Check 'B7' 'Packet_MoveKeyChange.Down' ($null -ne $pm.GetField('Down'))
+    }
+    $eea = $api.GetType('Vintagestory.API.Common.EnumEntityAction')
+    if ($eea) {
+        $names = [System.Enum]::GetNames($eea)
+        Check 'B7' 'EnumEntityAction.CtrlKey'  ($names -contains 'CtrlKey')
+        Check 'B7' 'EnumEntityAction.ShiftKey' ($names -contains 'ShiftKey')
+    }
+
     # B5 - bag decomposition
     $bagContent = $api.GetType('Vintagestory.API.Common.ItemSlotBagContent')
     $gc = $api.GetType('Vintagestory.API.Config.GlobalConstants')
@@ -130,7 +154,7 @@ if (-not $Versions) {
 }
 if (-not $Versions) { throw "No versions to check." }
 
-Write-Host "Binding sweep - six bindings per version" -ForegroundColor Cyan
+Write-Host "Binding sweep - seven bindings per version" -ForegroundColor Cyan
 Write-Host ""
 
 $pwsh = (Get-Process -Id $PID).Path

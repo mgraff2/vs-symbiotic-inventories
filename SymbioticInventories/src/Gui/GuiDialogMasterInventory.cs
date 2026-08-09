@@ -148,10 +148,8 @@ namespace SymbioticInventories.Gui
         private BlockPos quernPos;
         private IInventory quernInv;
 
-        /// <summary>The quern OUTPUT slot's bounds (deposit clicks are swallowed) and its
-        /// dialog-space position for the baked down-arrow marker.</summary>
+        /// <summary>The quern OUTPUT slot's bounds - deposit clicks on it are swallowed.</summary>
         private ElementBounds quernOutBounds;
-        private (double x, double y)? quernOutPos;
 
         /// <summary>Slot grids belonging to synthetic-interaction sections (FoodShelves):
         /// clicks on them are swallowed and become real block interactions.</summary>
@@ -709,17 +707,24 @@ namespace SymbioticInventories.Gui
                 composer.AddItemSlotGrid(quernInv, send, 1, new[] { 0 }, inB, "grid-quernin");
 
                 // Output as its OWN grid so it can be click-gated (no depositing) and
-                // marked with the baked down-arrow.
+                // marked with the down-arrow.
                 double outX = qx + IconTile + 6 + LayoutMetrics.Cell;
                 var outB = ElementStdBounds.SlotGrid(EnumDialogArea.None, outX, qy, 1, 1);
                 composer.AddItemSlotGrid(quernInv, send, 1, new[] { 1 }, outB, "grid-quernout");
                 quernOutBounds = outB;
-                quernOutPos = (outX, qy);
+
+                // The arrow must be an element ADDED AFTER the grid: it then paints above
+                // the opaque slot-box texture but below the item sprites (which render in
+                // the later PostRender stage) - visible while the slot is empty, covered
+                // by the flour once there is output. A static draw under the slot texture
+                // never shows at all - the baked-plate gotcha, hit once already.
+                composer.AddDynamicCustomDraw(
+                    ElementBounds.Fixed(outX, qy, LayoutMetrics.Cell, LayoutMetrics.Cell),
+                    (ctx, surface, b) => DrawQuernArrow(ctx), "quernarrow");
             }
             else
             {
                 quernOutBounds = null;
-                quernOutPos = null;
             }
 
             // ---- scrolling flow -------------------------------------------------
@@ -1002,31 +1007,29 @@ namespace SymbioticInventories.Gui
 
         /// <summary>Badges over the vessel tiles. Static draw: dialog-surface coordinates.
         /// Hidden sections' tiles render dimmed with a slash - clickable to bring back.</summary>
+        /// <summary>The output-only down-arrow, drawn on its own element surface (LOCAL
+        /// coordinates, one cell in size) layered above the slot box.</summary>
+        private static void DrawQuernArrow(Context ctx)
+        {
+            double g = RuntimeEnv.GUIScale;
+            double cx = LayoutMetrics.Cell * g / 2, cy = LayoutMetrics.Cell * g / 2;
+            double s = 7 * g;   // arrow half-width
+
+            ctx.SetSourceRGBA(0.92, 0.90, 0.85, 0.6);
+            // stem
+            ctx.Rectangle(cx - s * 0.35, cy - s * 1.4, s * 0.7, s * 1.2);
+            ctx.Fill();
+            // head
+            ctx.MoveTo(cx - s, cy - s * 0.3);
+            ctx.LineTo(cx + s, cy - s * 0.3);
+            ctx.LineTo(cx, cy + s);
+            ctx.ClosePath();
+            ctx.Fill();
+        }
+
         private void DrawStripChrome(Context ctx, ElementBounds bounds)
         {
             double g = RuntimeEnv.GUIScale;
-
-            // Down-arrow on the quern's OUTPUT slot: output-only, things fall out of it.
-            // Baked behind the item sprite - visible while the slot is empty, covered by
-            // the flour once there is something to take.
-            if (quernOutPos != null)
-            {
-                double cell = LayoutMetrics.Cell;
-                double cx = bounds.drawX + (quernOutPos.Value.x - contentX + cell / 2) * g;
-                double cy = bounds.drawY + (quernOutPos.Value.y + cell / 2) * g;
-                double s = 7 * g;   // arrow half-width
-
-                ctx.SetSourceRGBA(0.92, 0.90, 0.85, 0.55);
-                // stem
-                ctx.Rectangle(cx - s * 0.35, cy - s * 1.4, s * 0.7, s * 1.2);
-                ctx.Fill();
-                // head
-                ctx.MoveTo(cx - s, cy - s * 0.3);
-                ctx.LineTo(cx + s, cy - s * 0.3);
-                ctx.LineTo(cx, cy + s);
-                ctx.ClosePath();
-                ctx.Fill();
-            }
 
             // Group chips: neutral tab showing the member count; slashed when the whole
             // group is toggled off. Sits flush against its group's first tile.

@@ -728,7 +728,9 @@ namespace SymbioticInventories.Gui
             }
 
             // ---- scrolling flow -------------------------------------------------
-            var viewport = ElementBounds.Fixed(contentX + iconMargin, scrollStart, flowW, Math.Max(viewportH, 1));
+            // The viewport INCLUDES the icon margin, so margin markers are ordinary
+            // clipped, scrolling elements; the grids inside are offset by the margin.
+            var viewport = ElementBounds.Fixed(contentX, scrollStart, iconMargin + flowW, Math.Max(viewportH, 1));
             flowViewport = viewport;
 
             // Ribbon chrome is one dynamic custom draw (own element-sized surface, LOCAL
@@ -745,7 +747,7 @@ namespace SymbioticInventories.Gui
                 {
                     double relY = slice.Row * LayoutMetrics.Cell;
                     var b = ElementStdBounds.SlotGrid(EnumDialogArea.None,
-                        slice.Col * LayoutMetrics.Cell, relY - scrollY, slice.Cols, slice.Rows);
+                        iconMargin + slice.Col * LayoutMetrics.Cell, relY - scrollY, slice.Cols, slice.Rows);
 
                     var ids = new int[slice.Count];
                     Array.Copy(s.SlotIds, slice.SlotOffset, ids, 0, slice.Count);
@@ -754,6 +756,38 @@ namespace SymbioticInventories.Gui
                         "grid-" + s.Id + "-" + slice.SlotOffset);
                     scrollables.Add((b, relY));
                     if (s.OnCellClick != null) synthGrids.Add((b, slice, s));
+                }
+
+                // Container markers, drawn by the PASSIVE ITEM SLOT element - the vessel
+                // tiles' path, the one item-rendering mechanism proven on screen (the
+                // frame-time renderer ran without error yet never showed a pixel). Bags
+                // and the mount get their icon in the left margin beside their first row;
+                // shelf/sack bricks get their block in the blank gutter cell beside them.
+                var firstSlice = ribbon.Slices.Count > 0 ? ribbon.Slices[0] : null;
+                if (firstSlice != null && s.Icon != null)
+                {
+                    double cellU = LayoutMetrics.Cell;
+                    double msz = 0, mx = 0;
+                    if ((s.Kind == SectionKind.Backpack || s.Kind == SectionKind.Mount) && iconMargin > 0)
+                    {
+                        msz = cellU * 0.72;
+                        mx = (iconMargin - msz) / 2;
+                    }
+                    else if (s.OnCellClick != null && firstSlice.Col + firstSlice.Cols < plan.Cols)
+                    {
+                        msz = cellU * 0.8;
+                        mx = iconMargin + (firstSlice.Col + firstSlice.Cols) * cellU + (cellU - msz) / 2;
+                    }
+
+                    if (msz > 0)
+                    {
+                        double topY = firstSlice.Row * cellU + (cellU - msz) / 2;
+                        var mb = ElementBounds.Fixed(mx, topY - scrollY, msz, msz);
+                        var mslot = new DummySlot(s.Icon);
+                        iconSlots.Add(mslot);   // keep alive for the composer's lifetime
+                        composer.AddPassiveItemSlot(mb, s.Inventory as InventoryBase, mslot, false, "marker-" + s.Id);
+                        scrollables.Add((mb, topY));
+                    }
                 }
             }
             composer.EndClip();
@@ -934,85 +968,25 @@ namespace SymbioticInventories.Gui
 
         private void DrawRowIconsCore(float deltaTime, double g, double cell, double vx, double vy, System.Func<double, bool> RowVisible)
         {
+            // Only the LIVE PORTRAIT remains frame-time (an entity cannot be a passive
+            // slot); every item marker moved to passive-slot elements in the compose -
+            // the frame-time item renderer ran errorless yet never showed a pixel in play.
             foreach (var ribbon in plan.Ribbons)
             {
                 if (ribbon.Slices.Count == 0) continue;
                 var s = ribbon.Section;
                 var first = ribbon.Slices[0];
+                if (s.Kind != SectionKind.Mount || s.PortraitEntity == null || !s.PortraitEntity.Alive) continue;
 
-                if (s.Kind == SectionKind.Backpack && iconMargin > 0 && s.Icon != null)
-                {
-                    double relY = first.Row * cell;
-                    if (!RowVisible(relY)) continue;
-                    iconDrawSlot.Itemstack = s.Icon;
-                    capi.Render.RenderItemstackToGui(iconDrawSlot,
-                        vx - iconMargin * g * 0.5,
-                        vy + (relY - scrollY + cell * 0.5) * g,
-                        90, (float)(cell * 0.55 * g), ColorUtil.WhiteArgb, true, false, false);
-                }
-                else if (s.Kind == SectionKind.Mount)
-                {
-                    // Saddlebag icon in the margin next to the brick's first row - same
-                    // treatment as the worn bags, so the mount's rows explain themselves.
-                    if (iconMargin > 0 && s.Icon != null && RowVisible(first.Row * cell))
-                    {
-                        iconDrawSlot.Itemstack = s.Icon;
-                        capi.Render.RenderItemstackToGui(iconDrawSlot,
-                            vx - iconMargin * g * 0.5,
-                            vy + (first.Row * cell - scrollY + cell * 0.5) * g,
-                            90, (float)(cell * 0.55 * g), ColorUtil.WhiteArgb, true, false, false);
-                    }
+                // The live portrait stands in the blank row above the brick - it exists
+                // whenever bags are worn (first.Row > 0).
+                double relY = (first.Row - 1) * cell;
+                if (first.Row <= 0 || !RowVisible(relY)) continue;
+                double cx = vx + (iconMargin + first.Cols * 0.5 * cell) * g;
+                double bottomY = vy + (relY - scrollY + cell * 0.92) * g;
 
-                    // The live portrait stands in the blank row above the brick - it
-                    // exists whenever bags are worn (first.Row > 0).
-                    double relY = (first.Row - 1) * cell;
-                    if (first.Row <= 0 || !RowVisible(relY)) continue;
-                    double cx = vx + first.Cols * 0.5 * cell * g;
-                    double bottomY = vy + (relY - scrollY + cell * 0.92) * g;
-
-                    if (s.PortraitEntity != null && s.PortraitEntity.Alive)
-                    {
-                        capi.Render.RenderEntityToGui(deltaTime, s.PortraitEntity,
-                            cx, bottomY, 90, -0.4f, (float)(cell * 0.7 * g), ColorUtil.WhiteArgb);
-                    }
-                    else if (s.Icon != null)
-                    {
-                        iconDrawSlot.Itemstack = s.Icon;
-                        capi.Render.RenderItemstackToGui(iconDrawSlot,
-                            cx, vy + (relY - scrollY + cell * 0.5) * g,
-                            90, (float)(cell * 0.55 * g), ColorUtil.WhiteArgb, true, false, false);
-                    }
-                }
-                else if (s.Icon != null && s.Numbered && s.Kind != SectionKind.Mount)
-                {
-                    // Container marker IN THE GRID for every numbered section, so each
-                    // coloured region explains itself without the top filter row (user
-                    // ask). Shelf bricks get the block's picture in the blank gutter cell
-                    // right of the brick ("it would fit great"); everything else gets a
-                    // small picture tucked beside the number badge at the ribbon's first
-                    // cell: [7][chest] reads at a glance.
-                    double relY = first.Row * cell;
-                    if (!RowVisible(relY)) continue;
-                    iconDrawSlot.Itemstack = s.Icon;
-
-                    int gutterCol = first.Col + first.Cols;
-                    if (s.OnCellClick != null && gutterCol < plan.Cols)
-                    {
-                        capi.Render.RenderItemstackToGui(iconDrawSlot,
-                            vx + (gutterCol * cell + cell * 0.5) * g,
-                            vy + (relY - scrollY + cell * 0.5) * g,
-                            90, (float)(cell * 0.62 * g), ColorUtil.WhiteArgb, true, false, false);
-                    }
-                    else
-                    {
-                        // Beside the badge: badge sits at +2,+2 size 14; the marker rides
-                        // just right of it, small enough to leave the cell's item readable.
-                        capi.Render.RenderItemstackToGui(iconDrawSlot,
-                            vx + (first.Col * cell + 28) * g,
-                            vy + (relY - scrollY + 12) * g,
-                            90, (float)(18 * g), ColorUtil.WhiteArgb, true, false, false);
-                    }
-                }
+                capi.Render.RenderEntityToGui(deltaTime, s.PortraitEntity,
+                    cx, bottomY, 90, -0.4f, (float)(cell * 0.7 * g), ColorUtil.WhiteArgb);
             }
         }
 
@@ -1183,6 +1157,7 @@ namespace SymbioticInventories.Gui
             double g = RuntimeEnv.GUIScale;
             double cell = LayoutMetrics.Cell * g;
             double oy = -scrollY * g;
+            double ox = iconMargin * g;   // the viewport now includes the marker margin
 
             foreach (var ribbon in plan.Ribbons)
             {
@@ -1198,7 +1173,7 @@ namespace SymbioticInventories.Gui
                 void Trace()
                 {
                     foreach (var sl in ribbon.Slices)
-                        ctx.Rectangle(sl.Col * cell, oy + sl.Row * cell, sl.Cols * cell, sl.Rows * cell);
+                        ctx.Rectangle(ox + sl.Col * cell, oy + sl.Row * cell, sl.Cols * cell, sl.Rows * cell);
                 }
 
                 // Strong enough that every cell visibly carries its container's colour (the
@@ -1225,7 +1200,7 @@ namespace SymbioticInventories.Gui
                 ctx.Stroke();
 
                 var f = ribbon.Slices[0];
-                DrawBadge(ctx, f.Col * cell + 2 * g, oy + f.Row * cell + 2 * g, 14 * g, s.Number, a);
+                DrawBadge(ctx, ox + f.Col * cell + 2 * g, oy + f.Row * cell + 2 * g, 14 * g, s.Number, a);
             }
         }
 

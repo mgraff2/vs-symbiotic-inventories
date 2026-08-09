@@ -116,12 +116,56 @@ namespace SymbioticInventories.Integration
             return assetRestrictions;
         }
 
+        /// <summary>Opens the master window; wired by the mod system.</summary>
+        public Action OpenWindow;
+
         public void Start(ICoreClientAPI api, ILogger log)
         {
             capi = api;
             logger = log;
             // Facade cells display live aggregates; keep them current as sacks fill/drain.
             api.Event.RegisterGameTickListener(UpdateFacades, 250);
+            // The launch gesture below rides the in-world action stream.
+            api.Input.InWorldAction += OnInWorldAction;
+        }
+
+        /// <summary>
+        //// Launch gesture (user ask - shelves never open a dialog, so nothing triggered
+        /// the window from them): right-clicking a FoodShelves container with an EMPTY
+        /// hand on an EMPTY segment does nothing natively, so that free gesture opens the
+        /// master window instead. Filled segments keep their native take, held items keep
+        /// their native put - only the dead input is repurposed.
+        /// </summary>
+        private void OnInWorldAction(EnumEntityAction action, bool on, ref EnumHandling handled)
+        {
+            try
+            {
+                if (!on || action != EnumEntityAction.RightMouseDown || OpenWindow == null) return;
+                var t = BaseType();
+                if (t == null) return;
+
+                var sel = capi.World?.Player?.CurrentBlockSelection;
+                if (sel?.Position == null) return;
+                var be = capi.World.BlockAccessor.GetBlockEntity(sel.Position);
+                if (be == null || !t.IsInstanceOfType(be)) return;
+
+                var hand = capi.World.Player.InventoryManager.ActiveHotbarSlot;
+                if (hand != null && !hand.Empty) return;
+
+                if (invProp.GetValue(be) is not IInventory inv) return;
+                int per = Math.Max(1, (perSegProp?.GetValue(be) as int?) ?? 1);
+                int seg = Math.Max(0, sel.SelectionBoxIndex);
+                for (int i = seg * per; i < (seg + 1) * per && i < inv.Count; i++)
+                {
+                    if (!(inv[i]?.Empty ?? true)) return;   // has something: native take wins
+                }
+
+                OpenWindow();
+            }
+            catch (Exception e)
+            {
+                logger.Warning("[SymbioticInventories] Shelf launch gesture failed: {0}", e.Message);
+            }
         }
 
         private Type BaseType()

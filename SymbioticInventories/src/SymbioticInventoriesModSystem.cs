@@ -78,6 +78,11 @@ namespace SymbioticInventories
             // toggle. SetHotKeyHandler loses a startup race - each dialog re-registers its own
             // toggle in OnBlockTexturesLoaded, after mod load, so the vanilla inventory
             // reclaimed E and both windows opened. The prefix is order-independent.
+            shelves.OpenWindow = () =>
+            {
+                if (!window.IsOpened()) window.TryOpen();
+            };
+
             InventoryKeyInterceptor.Config = config;
             InventoryKeyInterceptor.Window = window;
             InventoryKeyInterceptor.Entities = entityContainers;

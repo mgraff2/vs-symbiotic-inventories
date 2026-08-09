@@ -1,6 +1,7 @@
 using SymbioticInventories.Core;
 using SymbioticInventories.Gui;
 using Vintagestory.API.Client;
+using Vintagestory.API.Common;
 
 namespace SymbioticInventories.Integration
 {
@@ -13,12 +14,19 @@ namespace SymbioticInventories.Integration
     /// being toggled is the vanilla inventory and the option is on, it opens our window and
     /// returns false to skip the vanilla open - order-independent, and the exact code path the
     /// game runs for the key, so there is no double window.
+    ///
+    /// CREATIVE is the exception: there the vanilla dialog IS the creative catalog, and
+    /// suppressing it locks the player out of spawning items entirely. So in creative the
+    /// prefix toggles our window alongside and lets the vanilla toggle run - E gives both
+    /// the catalog and the master window, which is exactly what creative building wants
+    /// (no more flipping to survival just to reach your inventory).
     /// </summary>
     public static class InventoryKeyInterceptor
     {
         public static ModConfig Config;
         public static GuiDialogMasterInventory Window;
         public static EntityContainerService Entities;
+        public static ICoreClientAPI Capi;
 
         public static bool Prefix(GuiDialog __instance, ref bool __result)
         {
@@ -28,6 +36,12 @@ namespace SymbioticInventories.Integration
 
             Window.Toggle();
             if (Window.IsOpened()) Entities?.Discover();
+
+            if (Capi?.World?.Player?.WorldData?.CurrentGameMode == EnumGameMode.Creative)
+            {
+                return true;   // creative: ALSO run the vanilla toggle - that is the catalog
+            }
+
             __result = true;   // the key was consumed
             return false;      // skip the vanilla inventory toggle
         }

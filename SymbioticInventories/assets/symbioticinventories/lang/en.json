@@ -23,7 +23,7 @@
   "options-title": "Symbiotic Inventories - Options",
   "opt-adjacent": "Open adjacent chests together",
   "opt-invkey": "Open on the inventory key (E)",
-  "opt-invkey-hint": "Your inventory key opens THIS window instead of the vanilla one - handy when mounted and unable to look at the animal's saddlebags. Turn this off to get the normal inventory/character (armour) screen on that key again.",
+  "opt-invkey-hint": "Your inventory key opens THIS window instead of the vanilla one - handy when mounted and unable to look at the animal's saddlebags. In creative mode the key opens the creative catalog AND this window together, so your inventory stays reachable while you build. Turn this off to get the vanilla behaviour back.",
   "opt-adjacent-hint": "One right-click on a chest also opens every chest of the same kind nearby, docking the whole wall into the window at once. Locked or claimed chests stay shut.",
   "opt-adjacent-radius": "Include chests within",
   "blocks-unit": "blocks",

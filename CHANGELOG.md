@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Creative mode: E opens both.** In creative, the inventory key opens the creative catalog
+  AND the master window together - previously the catalog was unreachable, and vanilla
+  creative never shows your own inventory at all. Build from the catalog, arrange in the
+  window, no more mode-flipping.
 - **Row markers.** Each worn bag's own icon sits in a margin left of its line, and a tiny
   live 3D portrait of your mount stands in the blank row above its saddlebag brick (only
   when saddlebags are present - absent, the whole part folds away). The vessel row now

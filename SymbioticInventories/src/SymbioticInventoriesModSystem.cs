@@ -77,6 +77,7 @@ namespace SymbioticInventories
             InventoryKeyInterceptor.Config = config;
             InventoryKeyInterceptor.Window = window;
             InventoryKeyInterceptor.Entities = entityContainers;
+            InventoryKeyInterceptor.Capi = api;
             harmony.Patch(
                 AccessTools.Method(typeof(GuiDialog), "OnKeyCombinationToggle"),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(InventoryKeyInterceptor), nameof(InventoryKeyInterceptor.Prefix))));

@@ -395,14 +395,27 @@ namespace SymbioticInventories.Gui
                 && capi.World?.Player?.WorldData?.CurrentGameMode == EnumGameMode.Creative)
             {
                 var cat = Integration.InventoryKeyInterceptor.VanillaInventoryDialog;
-                var cb = cat?.SingleComposer?.Bounds;
-                if (cat != null && cat.IsOpened() && cb != null)
+                if (cat != null && cat.IsOpened())
                 {
-                    double catX = cb.absX / scale, catW = cb.OuterWidth / scale;
-                    double leftSpace = catX, rightSpace = screenW - catX - catW;
-                    coopRight = rightSpace > leftSpace;
-                    coopAvailW = Math.Max(leftSpace, rightSpace) - Pad * 2 - 8;
-                    coop = coopAvailW >= 9 * LayoutMetrics.Cell;   // enough for a real grid
+                    // The catalog's footprint is the union across ALL its composers -
+                    // GuiDialogInventory composes into named composers, so SingleComposer
+                    // alone can be null or just one panel of it.
+                    double minX = double.MaxValue, maxX = double.MinValue;
+                    foreach (var comp in cat.Composers.Values)
+                    {
+                        var b = comp?.Bounds;
+                        if (b == null) continue;
+                        minX = Math.Min(minX, b.absX);
+                        maxX = Math.Max(maxX, b.absX + b.OuterWidth);
+                    }
+
+                    if (minX < maxX)
+                    {
+                        double leftSpace = minX / scale, rightSpace = screenW - maxX / scale;
+                        coopRight = rightSpace > leftSpace;
+                        coopAvailW = Math.Max(leftSpace, rightSpace) - Pad * 2 - 8;
+                        coop = coopAvailW >= 9 * LayoutMetrics.Cell;   // enough for a real grid
+                    }
                 }
             }
 

@@ -52,5 +52,17 @@ namespace SymbioticInventories.Integration
             __result = true;   // the key was consumed
             return false;      // skip the vanilla inventory toggle
         }
+
+        /// <summary>
+        /// After the vanilla toggle actually ran (the creative path lets it through), refit
+        /// the master window: its compose happened inside the prefix, BEFORE the catalog
+        /// opened, so the first fit could not see the catalog's bounds yet.
+        /// </summary>
+        public static void Postfix(GuiDialog __instance)
+        {
+            if (__instance.ToggleKeyCombinationCode != "inventorydialog") return;
+            if (Capi?.World?.Player?.WorldData?.CurrentGameMode != EnumGameMode.Creative) return;
+            Window?.Refresh();
+        }
     }
 }

@@ -80,7 +80,8 @@ namespace SymbioticInventories
             InventoryKeyInterceptor.Capi = api;
             harmony.Patch(
                 AccessTools.Method(typeof(GuiDialog), "OnKeyCombinationToggle"),
-                prefix: new HarmonyMethod(AccessTools.Method(typeof(InventoryKeyInterceptor), nameof(InventoryKeyInterceptor.Prefix))));
+                prefix: new HarmonyMethod(AccessTools.Method(typeof(InventoryKeyInterceptor), nameof(InventoryKeyInterceptor.Prefix))),
+                postfix: new HarmonyMethod(AccessTools.Method(typeof(InventoryKeyInterceptor), nameof(InventoryKeyInterceptor.Postfix))));
 
             // Opening a chest has to bring the master window up, otherwise capturing it
             // would just make the container disappear with nowhere to show its contents.

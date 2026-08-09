@@ -389,7 +389,13 @@ namespace SymbioticInventories.Gui
             // free side of the screen beside it - the two act as one combined surface, and
             // this recomposes whenever the catalog opens or closes (mod-system tick), so
             // the fit is dynamic, not a guess.
-            bool coop = false, coopRight = false;
+            // Creative co-op: E in creative opens the catalog AND this window, and this
+            // window ALWAYS sits to the catalog's RIGHT - the tab-free side (the catalog's
+            // tab column overhangs its left edge, outside its composer bounds, so snapping
+            // left collided with it; user settled on right, always). The window sizes to
+            // the actual free width and hugs the screen's right edge. Too narrow for a
+            // real grid (big GUI scale) falls back to the normal centered layout.
+            bool coop = false;
             double coopAvailW = 0;
             if (!docked
                 && capi.World?.Player?.WorldData?.CurrentGameMode == EnumGameMode.Creative)
@@ -397,23 +403,20 @@ namespace SymbioticInventories.Gui
                 var cat = Integration.InventoryKeyInterceptor.VanillaInventoryDialog;
                 if (cat != null && cat.IsOpened())
                 {
-                    // The catalog's footprint is the union across ALL its composers -
+                    // The catalog's right edge is the max across ALL its composers -
                     // GuiDialogInventory composes into named composers, so SingleComposer
                     // alone can be null or just one panel of it.
-                    double minX = double.MaxValue, maxX = double.MinValue;
+                    double maxX = double.MinValue;
                     foreach (var comp in cat.Composers.Values)
                     {
                         var b = comp?.Bounds;
                         if (b == null) continue;
-                        minX = Math.Min(minX, b.absX);
                         maxX = Math.Max(maxX, b.absX + b.OuterWidth);
                     }
 
-                    if (minX < maxX)
+                    if (maxX > double.MinValue)
                     {
-                        double leftSpace = minX / scale, rightSpace = screenW - maxX / scale;
-                        coopRight = rightSpace > leftSpace;
-                        coopAvailW = Math.Max(leftSpace, rightSpace) - Pad * 2 - 8;
+                        coopAvailW = screenW - maxX / scale - Pad * 2 - 8;
                         coop = coopAvailW >= 9 * LayoutMetrics.Cell;   // enough for a real grid
                     }
                 }
@@ -547,10 +550,10 @@ namespace SymbioticInventories.Gui
 
             var dialogBounds = ElementStdBounds.AutosizedMainDialog
                 .WithAlignment(docked ? EnumDialogArea.LeftMiddle
-                    : coop ? (coopRight ? EnumDialogArea.RightMiddle : EnumDialogArea.LeftMiddle)
+                    : coop ? EnumDialogArea.RightMiddle
                     : EnumDialogArea.CenterMiddle);
-            // Butt up against the catalog's side with a whisker of breathing room.
-            if (coop) dialogBounds = dialogBounds.WithFixedAlignmentOffset(coopRight ? -4 : 4, 0);
+            // Hug the screen's right edge, a whisker of breathing room from the border.
+            if (coop) dialogBounds = dialogBounds.WithFixedAlignmentOffset(-4, 0);
 
             var composer = capi.Gui
                 .CreateCompo("symbioticinventories:master", dialogBounds)

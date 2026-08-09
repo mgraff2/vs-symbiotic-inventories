@@ -69,6 +69,7 @@ namespace SymbioticInventories.Integration
         private object fsCore;
         private FieldInfo restrictionsField;
         private readonly Dictionary<string, ItemStack[]> ghostCache = new();
+        private readonly HashSet<string> geomLogged = new();
 
         public void Start(ICoreClientAPI api, ILogger log)
         {
@@ -133,25 +134,54 @@ namespace SymbioticInventories.Integration
                 int segs = (segsProp?.GetValue(be) as int?) ?? 1;
                 int perSeg = (perSegProp?.GetValue(be) as int?) ?? 1;
 
-                // Bulk containers (many items per segment - flour sacks, baskets) become
-                // FACADE grids: one cell per segment carrying the live total, "a container
-                // with an internal grid of 1" (user ask). Per-item shelves keep their real
-                // X x Y slot grid when the declared geometry matches the inventory; only
-                // genuinely odd shapes fall back to a flowing ribbon.
+                // Multi-item segments ALWAYS present as facade cells-of-N (user rule: an
+                // egg shelf whose columns hold 6 is cells of 6 - "1-6 maps easily") -
+                // even when the declared geometry does not match the inventory exactly;
+                // the segment count then derives from the inventory itself. Per-item
+                // shelves keep their real X x Y slot grid when the geometry checks out;
+                // only odd per-item shapes fall back to a flowing ribbon.
                 bool geomOk = shelves >= 1 && segs >= 1 && perSeg >= 1
                            && shelves * segs * perSeg == inv.Count;
-                bool facade = geomOk && perSeg > 1 && segs <= 12;
+                bool facade = perSeg > 1;
                 bool structured = geomOk && perSeg == 1 && segs <= 12;
+
+                int fRows = 0, fCols = 0;
+                if (facade)
+                {
+                    if (geomOk && segs <= 12)
+                    {
+                        fRows = shelves; fCols = segs;
+                    }
+                    else
+                    {
+                        int segCount = (inv.Count + perSeg - 1) / perSeg;
+                        fCols = Math.Min(Math.Max(1, segCount), 12);
+                        fRows = (segCount + fCols - 1) / fCols;
+                    }
+                }
+                else if (structured)
+                {
+                    fRows = shelves; fCols = segs;
+                }
 
                 var block = ba.GetBlock(p);
                 var stack = block != null && block.Id != 0 ? new ItemStack(block) : null;
+
+                // One-time geometry note per shelf type: ground truth for shaping bugs.
+                if (geomLogged.Add(block?.Code?.Path ?? "?"))
+                {
+                    logger.Notification(
+                        "[SymbioticInventories] Shelf '{0}': shelves={1} segs={2} perSeg={3} inv={4} -> {5} {6}x{7}",
+                        block?.Code?.Path, shelves, segs, perSeg, inv.Count,
+                        facade ? "facade" : (structured ? "grid" : "ribbon"), fCols, fRows);
+                }
 
                 found.Add((dx * dx + dy * dy + dz * dz, new AmbientShelf
                 {
                     Pos = p,
                     Inventory = inv,
-                    Rows = facade || structured ? shelves : 0,
-                    Cols = facade ? segs : (structured ? segs : 0),
+                    Rows = fRows,
+                    Cols = fCols,
                     ItemsPerSegment = Math.Max(1, perSeg),
                     Facade = facade,
                     Label = stack?.GetName() ?? "?",

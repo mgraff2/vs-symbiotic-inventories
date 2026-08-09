@@ -200,7 +200,7 @@ namespace SymbioticInventories.Integration
         /// </summary>
         public void InteractCell(AmbientShelf shelf, int slotIndex)
         {
-            if (job != null) return;   // one transfer at a time
+            if (job != null) { FinishJob(); return; }   // a click during a transfer stops it
 
             bool shift = capi.Input.KeyboardKeyState[(int)GlKeys.LShift]
                       || capi.Input.KeyboardKeyState[(int)GlKeys.RShift];
@@ -255,6 +255,18 @@ namespace SymbioticInventories.Integration
         /// contents turns puts into empty-hand TAKES and the sack spits everything back
         /// (real bug: "counts up quickly, then starts counting down").</summary>
         private void Pump(float dt)
+        {
+            // Any throw in here must not wedge the job forever (all shelf clicks would go
+            // dead) - fail into the cleanup path instead.
+            try { PumpCore(); }
+            catch (Exception e)
+            {
+                logger.Warning("[SymbioticInventories] Transfer pump failed: {0}", e.Message);
+                FinishJob();
+            }
+        }
+
+        private void PumpCore()
         {
             if (job == null) return;
             var im = capi.World.Player.InventoryManager;
@@ -343,18 +355,40 @@ namespace SymbioticInventories.Integration
             return false;
         }
 
-        /// <summary>Leftover back to the cursor, original hotbar selection restored.</summary>
+        /// <summary>
+        /// Ends the job now, but does the CLEANUP after the server settles: the final puts
+        /// are still in flight, so touching the working hand immediately picks up a ghost
+        /// stack the server is about to consume - corrections then fight the restore and
+        /// the whole hotbar feels wedged (real bug after a completed 188-flour pour). One
+        /// beat of quiet, then: leftover to the cursor (if the cursor is free), selection
+        /// restored, one log line saying what moved.
+        /// </summary>
         private void FinishJob()
         {
             var j = job;
             job = null;
             if (j == null || !j.Deposit) return;
 
-            var im = capi.World.Player.InventoryManager;
-            var hotbar = im.GetHotbarInventory();
-            int hand = im.ActiveHotbarSlotNumber;
-            if (!hotbar[hand].Empty) ClickSlot(hotbar, hand);   // leftover -> cursor
-            if (j.RestoreHotbarIndex >= 0) im.ActiveHotbarSlotNumber = j.RestoreHotbarIndex;
+            int handIndex = capi.World.Player.InventoryManager.ActiveHotbarSlotNumber;
+            capi.Event.RegisterCallback(_ =>
+            {
+                try
+                {
+                    var im = capi.World.Player.InventoryManager;
+                    var hotbar = im.GetHotbarInventory();
+                    var hand = hotbar[handIndex];
+                    if (!hand.Empty)
+                    {
+                        if (im.MouseItemSlot.Empty) ClickSlot(hotbar, handIndex);   // leftover -> cursor
+                        else logger.Notification("[SymbioticInventories] Transfer leftover kept in hotbar slot {0} (cursor occupied).", handIndex + 1);
+                    }
+                    if (j.RestoreHotbarIndex >= 0) im.ActiveHotbarSlotNumber = j.RestoreHotbarIndex;
+                }
+                catch (Exception e)
+                {
+                    logger.Warning("[SymbioticInventories] Transfer cleanup failed: {0}", e.Message);
+                }
+            }, 700);
         }
 
         /// <summary>An ordinary slot click with the mouse-cursor slot - the exact packets a

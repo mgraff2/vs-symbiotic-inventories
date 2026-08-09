@@ -176,6 +176,17 @@ namespace SymbioticInventories.Integration
             public int Guard;
             public long LastSig = long.MinValue;
             public int StaleBeats;
+
+            /// <summary>Items the working hand still holds BY OUR OWN COUNT. The client's
+            /// slot view can lag the server, and an interact fired past the hand's real
+            /// contents is an EMPTY-HAND click - a TAKE - which turns a deposit into the
+            /// sack spitting everything back out (real bug). The ledger is decremented per
+            /// put and never trusted less than the live slot; no put fires at ledger 0.</summary>
+            public int HandLedger;
+
+            /// <summary>Sack total last beat: a deposit that sees the total DROP has
+            /// started taking - stop instantly.</summary>
+            public int LastSackTotal = -1;
         }
 
         private TransferJob job;
@@ -234,11 +245,15 @@ namespace SymbioticInventories.Integration
             };
             im.ActiveHotbarSlotNumber = empty;
             ClickSlot(hotbar, empty);          // carried stack -> working hand
+            job.HandLedger = hotbar[empty].StackSize;   // clicks apply locally: accurate
             Pump(0);
         }
 
         /// <summary>One beat: a small batch of interactions, then re-arm. Progress is
-        /// measured on the client-synced inventories; three still beats end the job.</summary>
+        /// measured on the client-synced inventories; three still beats end the job. A
+        /// deposit fires ONLY puts the hand ledger can back - overrunning the hand's real
+        /// contents turns puts into empty-hand TAKES and the sack spits everything back
+        /// (real bug: "counts up quickly, then starts counting down").</summary>
         private void Pump(float dt)
         {
             if (job == null) return;
@@ -246,9 +261,24 @@ namespace SymbioticInventories.Integration
             var hotbar = im.GetHotbarInventory();
             var hand = hotbar[im.ActiveHotbarSlotNumber];
 
+            int sackTotal = 0;
             long sig = 17;
-            foreach (var s in job.Shelf.Inventory) sig = sig * 31 + (s?.StackSize ?? 0);
+            foreach (var s in job.Shelf.Inventory)
+            {
+                sackTotal += s?.StackSize ?? 0;
+                sig = sig * 31 + (s?.StackSize ?? 0);
+            }
             sig = sig * 31 + (job.Deposit ? hand.StackSize : 0);
+
+            // A deposit whose sack SHRANK has started taking - stop before the next beat
+            // makes it worse. (The stale check alone never fires here: taking changes the
+            // counts every beat, which reads as "progress".)
+            if (job.Deposit && job.LastSackTotal >= 0 && sackTotal < job.LastSackTotal)
+            {
+                FinishJob();
+                return;
+            }
+            job.LastSackTotal = sackTotal;
 
             if (sig == job.LastSig)
             {
@@ -262,13 +292,22 @@ namespace SymbioticInventories.Integration
 
             for (int i = 0; i < 4; i++)
             {
-                if (job.Deposit && hand.Empty)
+                if (job.Deposit)
                 {
-                    if (!job.FromWholeInventory || !RefillHand(hotbar, im.ActiveHotbarSlotNumber))
+                    // Reconcile with the live slot (client prediction may run ahead of the
+                    // ledger, never behind it), then refuse to fire past the ledger.
+                    if (hand.StackSize < job.HandLedger) job.HandLedger = hand.StackSize;
+                    if (job.HandLedger <= 0)
                     {
-                        FinishJob();
-                        return;
+                        if (!job.FromWholeInventory || !RefillHand(hotbar, im.ActiveHotbarSlotNumber))
+                        {
+                            FinishJob();
+                            return;
+                        }
+                        job.HandLedger = hand.StackSize;
+                        if (job.HandLedger <= 0) { FinishJob(); return; }
                     }
+                    job.HandLedger--;
                 }
                 Interact(job.Shelf, job.Slot);
                 if (++job.Guard > 2000) { FinishJob(); return; }

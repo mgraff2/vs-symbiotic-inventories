@@ -151,32 +151,82 @@ namespace SymbioticInventories.Core.Layout
             int row = lShape ? 0 : leftRows;
             int col = Span(row).a;
 
+            // Brick banding state: FixedColumns sections (FoodShelves) keep their real
+            // X x Y arrangement as rigid rectangles, laid side by side - one blank column
+            // between - along a band; a full band opens the next one below. Ribbons and
+            // bricks share the same flow; the registry orders bricks last in practice.
+            int bandRow = -1, bandCol = 0, bandH = 0;
+
             foreach (var s in offBody)
             {
-                int remaining = s.SlotCount, offset = 0;
-                var ribbon = new Ribbon { Section = s };
+                int w = s.FixedColumns;
+                bool brick = w > 0 && w <= cols;
 
-                while (remaining > 0)
+                if (!brick)
                 {
-                    var (a, b) = Span(row);
-                    if (col < a) col = a;
-                    if (col >= b) { row++; col = Span(row).a; continue; }
+                    // A ribbon after bricks resumes the flow below the band.
+                    if (bandRow >= 0) { row = bandRow + bandH; col = Span(row).a; bandRow = -1; }
 
-                    if (offset == 0) ribbon.StartCell = row * cols + col;
+                    int remaining = s.SlotCount, offset = 0;
+                    var ribbon = new Ribbon { Section = s };
 
-                    int run = Math.Min(remaining, b - col);
-                    var last = ribbon.Slices.Count > 0 ? ribbon.Slices[^1] : null;
-                    if (last != null && last.Col == col && last.Cols == run && last.Row + last.Rows == row)
-                        last.Rows++;   // equal spans stack into one multi-row slice/element
-                    else
-                        ribbon.Slices.Add(new RibbonSlice { Row = row, Col = col, Cols = run, Rows = 1, SlotOffset = offset });
+                    while (remaining > 0)
+                    {
+                        var (a, b) = Span(row);
+                        if (col < a) col = a;
+                        if (col >= b) { row++; col = Span(row).a; continue; }
 
-                    offset += run; remaining -= run; col += run;
-                    plan.Rows = Math.Max(plan.Rows, row + 1);
+                        if (offset == 0) ribbon.StartCell = row * cols + col;
+
+                        int run = Math.Min(remaining, b - col);
+                        var last = ribbon.Slices.Count > 0 ? ribbon.Slices[^1] : null;
+                        if (last != null && last.Col == col && last.Cols == run && last.Row + last.Rows == row)
+                            last.Rows++;   // equal spans stack into one multi-row slice/element
+                        else
+                            ribbon.Slices.Add(new RibbonSlice { Row = row, Col = col, Cols = run, Rows = 1, SlotOffset = offset });
+
+                        offset += run; remaining -= run; col += run;
+                        plan.Rows = Math.Max(plan.Rows, row + 1);
+                    }
+
+                    plan.Ribbons.Add(ribbon);
+                    plan.TotalCells += s.SlotCount;
+                    continue;
                 }
 
-                plan.Ribbons.Add(ribbon);
-                plan.TotalCells += s.SlotCount;
+                // ---- rigid brick ------------------------------------------------
+                int n = s.SlotCount;
+                int h = (n + w - 1) / w;
+
+                while (true)
+                {
+                    if (bandRow < 0)
+                    {
+                        // Fresh band: the first row at/after the cursor whose span holds
+                        // the brick (skips blank separator rows and too-narrow side rows).
+                        int r = row + (col > Span(row).a ? 1 : 0);
+                        while (Span(r).b - Span(r).a < w) r++;
+                        bandRow = r; bandCol = Span(r).a; bandH = 0;
+                    }
+                    if (bandCol + w <= Span(bandRow).b) break;
+                    // Band full: open the next one below it.
+                    row = bandRow + bandH; col = Span(row).a; bandRow = -1;
+                }
+
+                var brickRibbon = new Ribbon { Section = s, StartCell = bandRow * cols + bandCol };
+                int full = n / w;
+                if (full > 0)
+                    brickRibbon.Slices.Add(new RibbonSlice { Row = bandRow, Col = bandCol, Cols = w, Rows = full, SlotOffset = 0 });
+                int tail = n - full * w;
+                if (tail > 0)
+                    brickRibbon.Slices.Add(new RibbonSlice { Row = bandRow + full, Col = bandCol, Cols = tail, Rows = 1, SlotOffset = full * w });
+
+                plan.Ribbons.Add(brickRibbon);
+                plan.TotalCells += n;
+                plan.Rows = Math.Max(plan.Rows, bandRow + h);
+
+                bandH = Math.Max(bandH, h);
+                bandCol += w + 1;   // one blank column between bricks
             }
 
             return plan;

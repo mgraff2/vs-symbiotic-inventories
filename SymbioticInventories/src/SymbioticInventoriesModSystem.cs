@@ -41,7 +41,10 @@ namespace SymbioticInventories
             entityContainers = new EntityContainerService();
             entityContainers.Start(api, config, capture, Mod.Logger);
 
-            var registry = new SectionRegistry(api, capture);
+            var shelves = new ShelfDiscoveryService();
+            shelves.Start(api, Mod.Logger);
+
+            var registry = new SectionRegistry(api, capture, shelves);
             window = new GuiDialogMasterInventory(api, registry) { Config = config, Capture = capture };
             options = new GuiDialogOptions(api, config, () => api.StoreModConfig(config, ModConfig.Filename)) { MainWindow = window };
             window.OpenOptions = () => options.TryOpen();
@@ -94,6 +97,7 @@ namespace SymbioticInventories
             // 500 ms is imperceptible and both services skip what is already open.
             bool lastCatalogOpen = false;
             BlockPos lastQuernPos = null;
+            long lastShelfSig = 17;
             api.Event.RegisterGameTickListener(_ =>
             {
                 if (window.IsOpened())
@@ -107,6 +111,14 @@ namespace SymbioticInventories
                     if (!Equals(qp, lastQuernPos))
                     {
                         lastQuernPos = qp;
+                        window.Refresh();
+                    }
+
+                    // Shelf sections follow the player the same way.
+                    long sig = shelves.Signature();
+                    if (sig != lastShelfSig)
+                    {
+                        lastShelfSig = sig;
                         window.Refresh();
                     }
                 }

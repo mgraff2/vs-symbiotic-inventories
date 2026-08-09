@@ -153,6 +153,10 @@ namespace SymbioticInventories.Gui
         private ElementBounds quernOutBounds;
         private (double x, double y)? quernOutPos;
 
+        /// <summary>Slot grids belonging to synthetic-interaction sections (FoodShelves):
+        /// clicks on them are swallowed and become real block interactions.</summary>
+        private readonly List<(ElementBounds b, RibbonSlice slice, InventorySection s)> synthGrids = new();
+
         public GuiDialogMasterInventory(ICoreClientAPI capi, SectionRegistry registry) : base(capi)
         {
             this.registry = registry;
@@ -299,6 +303,22 @@ namespace SymbioticInventories.Gui
                     return;
                 }
 
+                // Shelf cells (FoodShelves): there is no slot packet route, so a click
+                // acts as the real block interaction on that cell's segment - empty hand
+                // takes the item into your inventory, a shelvable item in the ACTIVE
+                // HOTBAR slot puts. Swallowed before the slot grid element sees it (its
+                // normal slot ops would silently desync).
+                foreach (var (b, slice, s) in synthGrids)
+                {
+                    if (!b.PointInside(args.X, args.Y)) continue;
+                    double gsc = RuntimeEnv.GUIScale;
+                    int c = Math.Clamp((int)((args.X - b.absX) / gsc / LayoutMetrics.Cell), 0, slice.Cols - 1);
+                    int r = Math.Clamp((int)((args.Y - b.absY) / gsc / LayoutMetrics.Cell), 0, slice.Rows - 1);
+                    s.OnCellClick(slice.SlotOffset + r * slice.Cols + c);
+                    args.Handled = true;
+                    return;
+                }
+
                 // Group chips: hide the whole container type at once; if the whole group is
                 // already hidden, bring it all back.
                 foreach (var (_, _, _, bounds, _, members) in groupChips)
@@ -397,6 +417,7 @@ namespace SymbioticInventories.Gui
             iconTiles.Clear();
             iconSlots.Clear();
             groupChips.Clear();
+            synthGrids.Clear();
 
             double scale = Math.Max(0.1, RuntimeEnv.GUIScale);
             double screenW = capi.Render.FrameWidth / scale;
@@ -723,6 +744,7 @@ namespace SymbioticInventories.Gui
                     composer.AddItemSlotGrid(s.Inventory, s.SendPacket, slice.Cols, ids, b,
                         "grid-" + s.Id + "-" + slice.SlotOffset);
                     scrollables.Add((b, relY));
+                    if (s.OnCellClick != null) synthGrids.Add((b, slice, s));
                 }
             }
             composer.EndClip();

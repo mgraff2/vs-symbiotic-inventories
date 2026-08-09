@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **FoodShelves integration.** Crock shelves, bread/pie/sushi/egg shelves, flour sacks,
+  baskets, coolers and display cases within ~5 blocks join the unified grid as sections -
+  each shelf keeps its REAL spatial arrangement (a 2x3 crock shelf is a rigid 2x3 brick in
+  the grid, one shelf level per row), bricks banded side by side below the flowing
+  containers. Clicking a cell acts exactly like right-clicking that shelf segment in the
+  world: empty hand takes the item into your inventory, a shelvable item in your active
+  hotbar slot puts it. FoodShelves' own placement rules are enforced server-side, so
+  every shelf type works - including ones added after this was written. Soft dependency:
+  without FoodShelves the feature is silently off.
 - **Quern side-station.** With a quern in working range (~5 blocks), its icon plus its two
   slots (input, output) appear top-right in the window's strip - pull grain straight from
   your inventory into the quern and take the flour out, without opening its own window.

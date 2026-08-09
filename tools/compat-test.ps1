@@ -122,11 +122,17 @@ function Get-CompatMod([string]$modid, [string]$filePattern) {
 # what proves the two mods actually co-load and co-patch cleanly on every game version rather
 # than merely looking compatible on paper.
 #
+# foodshelves: the shelf integration reflects into its BEBaseFSContainer (Inventory,
+# ShelfCount, SegmentsPerShelf, ItemsPerSegment) and synthesizes interactions against its
+# blocks. The reflection is guarded - a rename just switches the feature off - but co-boot
+# proves the two mods load together cleanly.
+#
 # Add more as the surface grows, e.g.:
 #   $mods.somemodid = Get-CompatMod "somemodid" "somemodid_*.zip"
 Write-Host "Collecting companion mods..."
 $mods = [ordered]@{}
 $mods.shipwright = Get-CompatMod "shipwright" "shipwright*.zip"
+$mods.foodshelves = Get-CompatMod "foodshelves" "foodshelves*.zip"
 $mods.GetEnumerator() | ForEach-Object { Write-Host "  $($_.Key): $(Split-Path $_.Value -Leaf)" }
 
 # combos: solo, +each companion, all together. 'expect' = companion modids that must show

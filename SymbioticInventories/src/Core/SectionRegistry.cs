@@ -17,11 +17,13 @@ namespace SymbioticInventories.Core
     {
         private readonly ICoreClientAPI capi;
         private readonly DialogCaptureService capture;
+        private readonly ShelfDiscoveryService shelves;
 
-        public SectionRegistry(ICoreClientAPI capi, DialogCaptureService capture)
+        public SectionRegistry(ICoreClientAPI capi, DialogCaptureService capture, ShelfDiscoveryService shelves)
         {
             this.capi = capi;
             this.capture = capture;
+            this.shelves = shelves;
         }
 
         public List<InventorySection> Build()
@@ -37,11 +39,46 @@ namespace SymbioticInventories.Core
             AddBagSlots(sections, im);
             AddBackpacks(sections, im, ref badge);
             AddCaptured(sections, ref badge);
+            AddShelves(sections, ref badge);
             // Deliberately no hotbar section: the vanilla hotbar HUD is permanently on
             // screen anyway, so a copy in the window would only spend rows repeating the one
             // inventory the player can already always see.
 
             return sections;
+        }
+
+        /// <summary>
+        /// FoodShelves ambient containers near the player: crock shelves, bread/pie
+        /// shelves, sacks, baskets. Each keeps its real spatial arrangement - one shelf
+        /// level per row (FixedColumns) - and lays into the flow as a rigid brick. Cells
+        /// are synthetic-interaction (no packet route exists): a click acts as a real
+        /// right-click on that cell's segment. Added LAST so bricks band together below
+        /// the flowing ribbons.
+        /// </summary>
+        private void AddShelves(List<InventorySection> sections, ref int badge)
+        {
+            if (shelves == null) return;
+            foreach (var shelf in shelves.Discover())
+            {
+                var sh = shelf;
+                int n = ++badge;
+                int slots = sh.Cols > 0 ? sh.Rows * sh.Cols : sh.Inventory.Count;
+                sections.Add(new InventorySection
+                {
+                    Id = "shelf:" + sh.Pos,
+                    Label = sh.Label,
+                    Kind = SectionKind.GroundContainer,
+                    Number = n,
+                    Accent = SectionPalette.ForNumber(n),
+                    Inventory = sh.Inventory,
+                    SlotIds = Enumerable.Range(0, Math.Min(slots, sh.Inventory.Count)).ToArray(),
+                    FixedColumns = sh.Cols,
+                    Icon = sh.Icon,
+                    GroupKey = "foodshelves",
+                    SendPacket = _ => { },   // no packet route - cells are click-synthesized
+                    OnCellClick = slot => shelves.InteractCell(sh, slot)
+                });
+            }
         }
 
         // ---- player inventories --------------------------------------------------

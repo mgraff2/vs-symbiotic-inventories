@@ -78,6 +78,14 @@ namespace SymbioticInventories.Core
         public Entity PortraitEntity;
 
         /// <summary>
+        /// Non-null marks a SYNTHETIC-INTERACTION section (FoodShelves): its cells have no
+        /// slot packet route, so the window swallows clicks on them and calls this with the
+        /// clicked slot index instead - the handler synthesizes the real-world block
+        /// interaction. The slot grid itself is display-only.
+        /// </summary>
+        public Action<int> OnCellClick;
+
+        /// <summary>
         /// Container-type key for group filtering: "backpack" for worn bags, the block
         /// code's first path part for block containers ("chest", "trunk", "storagevessel"),
         /// "entity" for creature/vehicle inventories. Sections sharing a key form one group

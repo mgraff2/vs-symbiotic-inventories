@@ -53,7 +53,7 @@ $TSection = $si.GetType('SymbioticInventories.Core.InventorySection')
 $TKind    = $si.GetType('SymbioticInventories.Core.SectionKind')
 $TGrid    = $si.GetType('SymbioticInventories.Core.Layout.UnifiedGrid')
 
-function New-Section($label, $kind, $slots, $number) {
+function New-Section($label, $kind, $slots, $number, $fixedCols = 0) {
     $s = [System.Activator]::CreateInstance($TSection)
     $s.Id = $label
     $s.Label = $label
@@ -61,6 +61,7 @@ function New-Section($label, $kind, $slots, $number) {
     $s.SlotIds = [int[]](0..($slots - 1))
     $s.Number = $number
     $s.Accent = [double[]]@(0.5, 0.6, 0.7)
+    $s.FixedColumns = $fixedCols   # >0 = rigid X x Y brick (FoodShelves)
     return $s
 }
 
@@ -86,6 +87,16 @@ $scenarios = @{
         (New-Section 'Sturdy 1'  'Backpack' 8 1),
         (New-Section 'Sturdy 2'  'Backpack' 8 2),
         (New-Section 'Saddlebag' 'Mount'   12 3)
+    )
+    # FoodShelves pantry: a chest ribbon plus rigid shelf bricks (FixedColumns) that keep
+    # their real X x Y arrangement, banded side by side with a blank column between.
+    'pantry' = @(
+        (New-Section 'Sturdy 1'    'Backpack'        8 1),
+        (New-Section 'Sturdy 2'    'Backpack'        8 2),
+        (New-Section 'Chest'       'GroundContainer' 16 3),
+        (New-Section 'Crock shelf' 'GroundContainer' 6 4 2),
+        (New-Section 'Bread shelf' 'GroundContainer' 8 5 4),
+        (New-Section 'Pie shelf'   'GroundContainer' 6 6 3)
     )
     'typical' = @(
         (New-Section 'Hunter bag'  'Backpack'       16 1),
@@ -277,7 +288,7 @@ Write-Host ""
 
 $ensure = $TGrid.GetMethod('EnsureSideRoom')
 
-foreach ($scenarioName in @('minimal', 'solo', 'riding', 'typical', 'boat', 'warehouse', 'heavy')) {
+foreach ($scenarioName in @('minimal', 'solo', 'riding', 'pantry', 'typical', 'boat', 'warehouse', 'heavy')) {
     foreach ($cols in @(24, 8)) {
         $modeName = if ($cols -eq 8) { 'DockLeft' } else { 'Auto' }
         $list = New-SectionList $scenarios[$scenarioName]

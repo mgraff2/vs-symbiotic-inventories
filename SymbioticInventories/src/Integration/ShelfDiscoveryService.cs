@@ -234,54 +234,33 @@ namespace SymbioticInventories.Integration
             }
         }
 
-        // ---- bulk transfer pump ---------------------------------------------------
+        // ---- fixed-count transfer stepper -----------------------------------------
         //
-        // FoodShelves moves ONE item per interaction, so bulk amounts (a 1000-flour sack)
-        // are transferred the way a patient player would: by clicking repeatedly. The pump
-        // batches a few interactions per beat and watches for progress; when nothing
-        // changes for a few beats (sack full, sack empty, inventory exhausted, server
-        // said no) it stops. Every step is an ordinary server-validated operation.
+        // Deterministic by construction (user spec after the adaptive pump proved
+        // inconsistent): every job fires a number of interactions decided UP FRONT -
+        // one per 30ms step, each a real server-validated block interaction - and stops
+        // early only on unambiguous client-visible facts (hand empty, cell empty). No
+        // batches, no refills, no progress heuristics.
 
         private class TransferJob
         {
             public AmbientShelf Shelf;
             public int Slot;
             public bool Deposit;
-            public bool FromWholeInventory;   // shift-deposit: keep refilling from the bags
-            public ItemStack Match;           // what we are pouring (for refills)
+
+            /// <summary>Interactions left to fire - fixed when the job starts.</summary>
+            public int Remaining;
+
             public int RestoreHotbarIndex = -1;
-            public int Guard;
-            public long LastSig = long.MinValue;
-            public int StaleBeats;
-
-            /// <summary>Items the working hand still holds BY OUR OWN COUNT. The client's
-            /// slot view can lag the server, and an interact fired past the hand's real
-            /// contents is an EMPTY-HAND click - a TAKE - which turns a deposit into the
-            /// sack spitting everything back out (real bug). The ledger is decremented per
-            /// put and never trusted less than the live slot; no put fires at ledger 0.</summary>
-            public int HandLedger;
-
-            /// <summary>Sack total last beat: a deposit that sees the total DROP has
-            /// started taking - stop instantly.</summary>
-            public int LastSackTotal = -1;
-
-            /// <summary>For takes: stop after this many items (0 = drain). A plain click
-            /// lifts one full stack's worth - vessel-like - a shift-click empties the cell.</summary>
-            public int TakeLimit;
-
-            /// <summary>Interactions fired, the precise cap for limited takes (one item
-            /// per interaction is the mod's own rate).</summary>
-            public int Fired;
         }
 
         private TransferJob job;
 
         /// <summary>
-        /// A click on a shelf cell:
-        ///   click, empty cursor        -> take one (the mod's native behaviour)
-        ///   SHIFT-click, empty cursor  -> drain the cell into the player's bags
-        ///   click, carrying a stack    -> deposit the whole carried stack
-        ///   SHIFT-click, carrying      -> deposit it AND every matching stack in the bags
+        /// A click on a shelf cell - simple fixed-count semantics (user spec):
+        ///   click, carrying a stack -> deposit the carried stack (up to its full 64)
+        ///   click, empty cursor     -> take one full stack's worth (up to 64)
+        ///   SHIFT-click             -> move exactly ONE item, either direction
         /// </summary>
         public void InteractCell(AmbientShelf shelf, int slotIndex)
         {
@@ -289,55 +268,57 @@ namespace SymbioticInventories.Integration
 
             bool shift = capi.Input.KeyboardKeyState[(int)GlKeys.LShift]
                       || capi.Input.KeyboardKeyState[(int)GlKeys.RShift];
-            var mouse = capi.World.Player?.InventoryManager?.MouseItemSlot;
+            var im = capi.World.Player.InventoryManager;
+            var mouse = im.MouseItemSlot;
             bool carrying = mouse != null && !mouse.Empty;
 
             if (!carrying)
             {
-                // Vessel-like takes: a plain click on a filled cell lifts one full stack's
-                // worth, shift drains the cell. The take is aimed at an EMPTY hotbar slot
-                // as the working hand: if the mod's take delivers to the hand, the cleanup
-                // click lands the stack on the CURSOR - exactly a vessel pickup. If it
-                // delivers to the bags instead, the working hand just stays empty and the
-                // items are in the bags; either way nothing held is displaced.
-                var im2 = capi.World.Player.InventoryManager;
-                ItemStack cellStack = null;
+                // Shift = exactly one, the mod's native single take - no machinery at all.
+                if (shift) { Interact(shelf, slotIndex); return; }
+
+                // Plain click = one stack's worth, counted from the client view of the
+                // segment. Aimed at an EMPTY hotbar slot as the working hand: if the mod's
+                // take delivers to the hand, the settled cleanup lands the stack on the
+                // CURSOR - a vessel pickup; if it delivers to the bags, the hand stays
+                // empty and cleanup no-ops. Nothing held is ever displaced.
                 int per = Math.Max(1, shelf.ItemsPerSegment);
                 int segStart = slotIndex / per * per;
+                int inCell = 0;
+                int maxStack = 64;
                 for (int i = segStart; i < segStart + per && i < shelf.Inventory.Count; i++)
                 {
-                    cellStack = shelf.Inventory[i]?.Itemstack;
-                    if (cellStack != null) break;
+                    var st = shelf.Inventory[i]?.Itemstack;
+                    if (st == null) continue;
+                    inCell += st.StackSize;
+                    maxStack = Math.Max(1, st.Collectible?.MaxStackSize ?? 64);
                 }
-                if (cellStack == null) { Interact(shelf, slotIndex); return; }   // empty cell: native click
+                if (inCell == 0) { Interact(shelf, slotIndex); return; }   // empty cell: native click
 
                 job = new TransferJob
                 {
                     Shelf = shelf,
                     Slot = slotIndex,
                     Deposit = false,
-                    TakeLimit = shift ? 0 : Math.Max(1, cellStack.Collectible?.MaxStackSize ?? 1)
+                    Remaining = Math.Min(inCell, maxStack)
                 };
-
-                var hb = im2.GetHotbarInventory();
+                var hb = im.GetHotbarInventory();
                 for (int i = 0; i < 10 && i < hb.Count; i++)
                 {
                     if (hb[i].Empty)
                     {
-                        job.RestoreHotbarIndex = im2.ActiveHotbarSlotNumber;
-                        im2.ActiveHotbarSlotNumber = i;
+                        job.RestoreHotbarIndex = im.ActiveHotbarSlotNumber;
+                        im.ActiveHotbarSlotNumber = i;
                         break;
                     }
                 }
-                Pump(0);
+                Step(0);
                 return;
             }
 
-            // Deposit: the put interaction consumes from the ACTIVE HOTBAR hand, so use an
-            // EMPTY hotbar slot as the working hand (no tool gets displaced), drop the
-            // carried stack into it, and let the pump click away. The cursor doubles as
-            // the refill register for shift-deposits.
-            var im = capi.World.Player.InventoryManager;
+            // Deposit: the put interaction consumes from the ACTIVE HOTBAR hand, so the
+            // carried stack goes to an EMPTY hotbar slot first (no tool displaced), then
+            // exactly one interaction per item is fired. SHIFT deposits a single item.
             var hotbar = im.GetHotbarInventory();
             int empty = -1;
             for (int i = 0; i < 10 && i < hotbar.Count; i++)
@@ -346,7 +327,7 @@ namespace SymbioticInventories.Integration
             }
             if (empty < 0)
             {
-                logger.Notification("[SymbioticInventories] Bulk deposit needs one empty hotbar slot.");
+                logger.Notification("[SymbioticInventories] Depositing needs one empty hotbar slot.");
                 return;
             }
 
@@ -355,126 +336,48 @@ namespace SymbioticInventories.Integration
                 Shelf = shelf,
                 Slot = slotIndex,
                 Deposit = true,
-                FromWholeInventory = shift,
-                Match = mouse.Itemstack.Clone(),
                 RestoreHotbarIndex = im.ActiveHotbarSlotNumber
             };
             im.ActiveHotbarSlotNumber = empty;
-            ClickSlot(hotbar, empty);          // carried stack -> working hand
-            job.HandLedger = hotbar[empty].StackSize;   // clicks apply locally: accurate
-            Pump(0);
+            ClickSlot(hotbar, empty);          // carried stack -> working hand (applies locally)
+            job.Remaining = shift ? Math.Min(1, hotbar[empty].StackSize) : hotbar[empty].StackSize;
+            Step(0);
         }
 
-        /// <summary>One beat: a small batch of interactions, then re-arm. Progress is
-        /// measured on the client-synced inventories; three still beats end the job. A
-        /// deposit fires ONLY puts the hand ledger can back - overrunning the hand's real
-        /// contents turns puts into empty-hand TAKES and the sack spits everything back
-        /// (real bug: "counts up quickly, then starts counting down").</summary>
-        private void Pump(float dt)
+        /// <summary>One step: one interaction, 30ms apart, until the fixed count is spent
+        /// or the client-visible state says the job cannot continue (deposit hand empty /
+        /// take cell empty). A throw cleans up instead of wedging the job.</summary>
+        private void Step(float dt)
         {
-            // Any throw in here must not wedge the job forever (all shelf clicks would go
-            // dead) - fail into the cleanup path instead.
-            try { PumpCore(); }
+            try
+            {
+                if (job == null) return;
+                var im = capi.World.Player.InventoryManager;
+                var hand = im.GetHotbarInventory()[im.ActiveHotbarSlotNumber];
+
+                bool done = job.Remaining <= 0 || (job.Deposit && hand.Empty);
+                if (!done && !job.Deposit)
+                {
+                    int per = Math.Max(1, job.Shelf.ItemsPerSegment);
+                    int segStart = job.Slot / per * per;
+                    int inCell = 0;
+                    for (int i = segStart; i < segStart + per && i < job.Shelf.Inventory.Count; i++)
+                    {
+                        inCell += job.Shelf.Inventory[i]?.Itemstack?.StackSize ?? 0;
+                    }
+                    done = inCell == 0;
+                }
+                if (done) { FinishJob(); return; }
+
+                Interact(job.Shelf, job.Slot);
+                job.Remaining--;
+                capi.Event.RegisterCallback(Step, 30);
+            }
             catch (Exception e)
             {
-                logger.Warning("[SymbioticInventories] Transfer pump failed: {0}", e.Message);
+                logger.Warning("[SymbioticInventories] Transfer step failed: {0}", e.Message);
                 FinishJob();
             }
-        }
-
-        private void PumpCore()
-        {
-            if (job == null) return;
-            var im = capi.World.Player.InventoryManager;
-            var hotbar = im.GetHotbarInventory();
-            var hand = hotbar[im.ActiveHotbarSlotNumber];
-
-            int sackTotal = 0;
-            long sig = 17;
-            foreach (var s in job.Shelf.Inventory)
-            {
-                sackTotal += s?.StackSize ?? 0;
-                sig = sig * 31 + (s?.StackSize ?? 0);
-            }
-            sig = sig * 31 + (job.Deposit ? hand.StackSize : 0);
-
-            // A deposit whose sack SHRANK has started taking - stop before the next beat
-            // makes it worse. (The stale check alone never fires here: taking changes the
-            // counts every beat, which reads as "progress".)
-            if (job.Deposit && job.LastSackTotal >= 0 && sackTotal < job.LastSackTotal)
-            {
-                FinishJob();
-                return;
-            }
-            job.LastSackTotal = sackTotal;
-
-            if (sig == job.LastSig)
-            {
-                if (++job.StaleBeats >= 3) { FinishJob(); return; }
-            }
-            else
-            {
-                job.StaleBeats = 0;
-                job.LastSig = sig;
-            }
-
-            for (int i = 0; i < 4; i++)
-            {
-                if (job.Deposit)
-                {
-                    // Reconcile with the live slot (client prediction may run ahead of the
-                    // ledger, never behind it), then refuse to fire past the ledger.
-                    if (hand.StackSize < job.HandLedger) job.HandLedger = hand.StackSize;
-                    if (job.HandLedger <= 0)
-                    {
-                        if (!job.FromWholeInventory || !RefillHand(hotbar, im.ActiveHotbarSlotNumber))
-                        {
-                            FinishJob();
-                            return;
-                        }
-                        job.HandLedger = hand.StackSize;
-                        if (job.HandLedger <= 0) { FinishJob(); return; }
-                    }
-                    job.HandLedger--;
-                }
-                else if (job.TakeLimit > 0 && job.Fired >= job.TakeLimit)
-                {
-                    FinishJob();
-                    return;
-                }
-                Interact(job.Shelf, job.Slot);
-                job.Fired++;
-                if (++job.Guard > 2000) { FinishJob(); return; }
-            }
-
-            capi.Event.RegisterCallback(Pump, 150);
-        }
-
-        /// <summary>Pulls the next stack matching the poured item from the player's bags
-        /// (or non-active hotbar slots) into the working hand: two ordinary clicks with the
-        /// cursor as the register. False when the inventory has no more to give.</summary>
-        private bool RefillHand(IInventory hotbar, int handIndex)
-        {
-            var im = capi.World.Player.InventoryManager;
-            var sources = new[]
-            {
-                im.GetOwnInventory(Vintagestory.API.Config.GlobalConstants.backpackInvClassName),
-                hotbar
-            };
-            foreach (var inv in sources)
-            {
-                if (inv == null) continue;
-                for (int i = 0; i < inv.Count; i++)
-                {
-                    if (inv == hotbar && i == handIndex) continue;
-                    var st = inv[i]?.Itemstack;
-                    if (st == null || !st.Satisfies(job.Match)) continue;
-                    ClickSlot(inv, i);              // stack -> cursor
-                    ClickSlot(hotbar, handIndex);   // cursor -> working hand
-                    return true;
-                }
-            }
-            return false;
         }
 
         /// <summary>

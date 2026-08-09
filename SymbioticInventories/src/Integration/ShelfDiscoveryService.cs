@@ -5,6 +5,7 @@ using HarmonyLib;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.MathTools;
+using Vintagestory.GameContent;
 
 namespace SymbioticInventories.Integration
 {
@@ -141,20 +142,26 @@ namespace SymbioticInventories.Integration
             try
             {
                 if (!on || action != EnumEntityAction.RightMouseDown || OpenWindow == null) return;
-                var t = BaseType();
-                if (t == null) return;
 
                 var sel = capi.World?.Player?.CurrentBlockSelection;
                 if (sel?.Position == null) return;
                 var be = capi.World.BlockAccessor.GetBlockEntity(sel.Position);
-                if (be == null || !t.IsInstanceOfType(be)) return;
+                if (be == null) return;
+
+                var t = BaseType();
+                bool isShelf = t != null && t.IsInstanceOfType(be);
+                bool isCrate = be is BlockEntityCrate;
+                if (!isShelf && !isCrate) return;
 
                 var hand = capi.World.Player.InventoryManager.ActiveHotbarSlot;
                 if (hand != null && !hand.Empty) return;
 
-                if (invProp.GetValue(be) is not IInventory inv) return;
-                int per = Math.Max(1, (perSegProp?.GetValue(be) as int?) ?? 1);
-                int seg = Math.Max(0, sel.SelectionBoxIndex);
+                IInventory inv = isCrate
+                    ? ((BlockEntityCrate)be).Inventory
+                    : invProp.GetValue(be) as IInventory;
+                if (inv == null) return;
+                int per = isCrate ? inv.Count : Math.Max(1, (perSegProp?.GetValue(be) as int?) ?? 1);
+                int seg = isCrate ? 0 : Math.Max(0, sel.SelectionBoxIndex);
                 for (int i = seg * per; i < (seg + 1) * per && i < inv.Count; i++)
                 {
                     if (!(inv[i]?.Empty ?? true)) return;   // has something: native take wins
@@ -203,9 +210,9 @@ namespace SymbioticInventories.Integration
         public List<AmbientShelf> Discover(int radius = 5)
         {
             var found = new List<(int dist, AmbientShelf shelf)>();
-            var t = BaseType();
+            var t = BaseType();   // may be null: vanilla crates integrate regardless
             var center = capi.World?.Player?.Entity?.Pos?.AsBlockPos;
-            if (t == null || center == null) return new List<AmbientShelf>();
+            if (center == null) return new List<AmbientShelf>();
 
             var ba = capi.World.BlockAccessor;
             for (int dx = -radius; dx <= radius; dx++)
@@ -214,7 +221,38 @@ namespace SymbioticInventories.Integration
             {
                 var p = center.AddCopy(dx, dy, dz);
                 var be = ba.GetBlockEntity(p);
-                if (be == null || !t.IsInstanceOfType(be)) continue;
+                if (be == null) continue;
+
+                // VANILLA CRATES: the same species as the shelves - no dialog, put/take
+                // by right-click, one item type in bulk - so they present as a one-cell
+                // facade with the crate's live total (user ask). Native per-click
+                // semantics; the launch gesture and markers apply like any shelf.
+                if (be is BlockEntityCrate crate)
+                {
+                    var cinv = crate.Inventory;
+                    if (cinv == null || cinv.Count == 0) continue;
+                    var cblock = ba.GetBlock(p);
+                    var cstack = cblock != null && cblock.Id != 0 ? new ItemStack(cblock) : null;
+                    if (geomLogged.Add(cblock?.Code?.Path ?? "crate"))
+                    {
+                        logger.Notification("[SymbioticInventories] Crate '{0}': inv={1} -> facade 1x1",
+                            cblock?.Code?.Path, cinv.Count);
+                    }
+                    found.Add((dx * dx + dy * dy + dz * dz, new AmbientShelf
+                    {
+                        Pos = p,
+                        Inventory = cinv,
+                        Rows = 1,
+                        Cols = 1,
+                        ItemsPerSegment = cinv.Count,   // the whole crate is one segment
+                        Facade = true,
+                        Label = cstack?.GetName() ?? "?",
+                        Icon = cstack
+                    }));
+                    continue;
+                }
+
+                if (t == null || !t.IsInstanceOfType(be)) continue;
 
                 var inv = invProp.GetValue(be) as IInventory;
                 if (inv == null || inv.Count == 0) continue;

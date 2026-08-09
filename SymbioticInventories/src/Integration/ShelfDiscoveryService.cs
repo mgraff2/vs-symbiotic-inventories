@@ -294,7 +294,22 @@ namespace SymbioticInventories.Integration
         private void InteractForged(AmbientShelf shelf, int slotIndex, bool ctrl, bool shift)
         {
             var player = capi.World.Player;
-            if (!ForgeAvailable() || player.Entity.MountedOn != null)
+            if (player.Entity.MountedOn != null)
+            {
+                // While mounted the game routes ALL control-key state - physical keys and
+                // forged packets alike - to the MOUNT's controls, but the shelf mod reads
+                // the player's own. Whole-stack gestures cannot reach it from the saddle
+                // (the native CTRL+SHIFT combo fails identically). Degrade to a single
+                // item, but SAY SO - the silent version read as a broken mod (real report).
+                if (ctrl)
+                {
+                    capi.TriggerIngameError(this, "si-mounted",
+                        Vintagestory.API.Config.Lang.Get("symbioticinventories:mounted-bulk"));
+                }
+                Interact(shelf, slotIndex);
+                return;
+            }
+            if (!ForgeAvailable())
             {
                 Interact(shelf, slotIndex);
                 return;

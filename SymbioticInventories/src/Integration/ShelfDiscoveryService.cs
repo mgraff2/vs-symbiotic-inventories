@@ -257,10 +257,11 @@ namespace SymbioticInventories.Integration
         private TransferJob job;
 
         /// <summary>
-        /// A click on a shelf cell - simple fixed-count semantics (user spec):
-        ///   click, carrying a stack -> deposit the carried stack (up to its full 64)
-        ///   click, empty cursor     -> take one full stack's worth (up to 64)
-        ///   SHIFT-click             -> move exactly ONE item, either direction
+        /// A click on a shelf cell - reads intent from what the player is holding:
+        ///   holding a stack (active hotbar hand OR mouse cursor) -> POUR IT ALL IN
+        ///   empty-handed                                          -> take a full stack out
+        ///   SHIFT-click -> one single native interaction (moves 1; and with the mod's own
+        ///   sneak+sprint combo physically held it stays its native whole-stack gesture)
         /// </summary>
         public void InteractCell(AmbientShelf shelf, int slotIndex)
         {
@@ -268,79 +269,90 @@ namespace SymbioticInventories.Integration
 
             bool shift = capi.Input.KeyboardKeyState[(int)GlKeys.LShift]
                       || capi.Input.KeyboardKeyState[(int)GlKeys.RShift];
+            if (shift) { Interact(shelf, slotIndex); return; }   // native single/combo gesture
+
             var im = capi.World.Player.InventoryManager;
             var mouse = im.MouseItemSlot;
-            bool carrying = mouse != null && !mouse.Empty;
+            var hotbar = im.GetHotbarInventory();
+            var hand = hotbar[im.ActiveHotbarSlotNumber];
 
-            if (!carrying)
+            // ---- deposit straight from the ACTIVE HAND (the natural in-world flow:
+            // "64 flour in my hand, click the sack") - no shuttling, the put interaction
+            // consumes from exactly where the stack already is.
+            if (!hand.Empty)
             {
-                // Shift = exactly one, the mod's native single take - no machinery at all.
-                if (shift) { Interact(shelf, slotIndex); return; }
-
-                // Plain click = one stack's worth, counted from the client view of the
-                // segment. Aimed at an EMPTY hotbar slot as the working hand: if the mod's
-                // take delivers to the hand, the settled cleanup lands the stack on the
-                // CURSOR - a vessel pickup; if it delivers to the bags, the hand stays
-                // empty and cleanup no-ops. Nothing held is ever displaced.
-                int per = Math.Max(1, shelf.ItemsPerSegment);
-                int segStart = slotIndex / per * per;
-                int inCell = 0;
-                int maxStack = 64;
-                for (int i = segStart; i < segStart + per && i < shelf.Inventory.Count; i++)
+                job = new TransferJob
                 {
-                    var st = shelf.Inventory[i]?.Itemstack;
-                    if (st == null) continue;
-                    inCell += st.StackSize;
-                    maxStack = Math.Max(1, st.Collectible?.MaxStackSize ?? 64);
+                    Shelf = shelf,
+                    Slot = slotIndex,
+                    Deposit = true,
+                    Remaining = hand.StackSize
+                };
+                Step(0);
+                return;
+            }
+
+            // ---- deposit a MOUSE-CARRIED stack: shuttle it into an empty hotbar slot
+            // first (the interaction only consumes from the hand), then pour.
+            if (mouse != null && !mouse.Empty)
+            {
+                int empty = -1;
+                for (int i = 0; i < 10 && i < hotbar.Count; i++)
+                {
+                    if (hotbar[i].Empty) { empty = i; break; }
                 }
-                if (inCell == 0) { Interact(shelf, slotIndex); return; }   // empty cell: native click
+                if (empty < 0)
+                {
+                    logger.Notification("[SymbioticInventories] Depositing needs one empty hotbar slot.");
+                    return;
+                }
 
                 job = new TransferJob
                 {
                     Shelf = shelf,
                     Slot = slotIndex,
-                    Deposit = false,
-                    Remaining = Math.Min(inCell, maxStack)
+                    Deposit = true,
+                    RestoreHotbarIndex = im.ActiveHotbarSlotNumber
                 };
-                var hb = im.GetHotbarInventory();
-                for (int i = 0; i < 10 && i < hb.Count; i++)
-                {
-                    if (hb[i].Empty)
-                    {
-                        job.RestoreHotbarIndex = im.ActiveHotbarSlotNumber;
-                        im.ActiveHotbarSlotNumber = i;
-                        break;
-                    }
-                }
+                im.ActiveHotbarSlotNumber = empty;
+                ClickSlot(hotbar, empty);          // carried stack -> working hand (applies locally)
+                job.Remaining = hotbar[empty].StackSize;
                 Step(0);
                 return;
             }
 
-            // Deposit: the put interaction consumes from the ACTIVE HOTBAR hand, so the
-            // carried stack goes to an EMPTY hotbar slot first (no tool displaced), then
-            // exactly one interaction per item is fired. SHIFT deposits a single item.
-            var hotbar = im.GetHotbarInventory();
-            int empty = -1;
-            for (int i = 0; i < 10 && i < hotbar.Count; i++)
+            // ---- empty-handed: take one full stack's worth, counted from the client view
+            // of the segment. Aimed at an empty hotbar slot so a hand-delivered take can
+            // land on the cursor at cleanup.
+            int per = Math.Max(1, shelf.ItemsPerSegment);
+            int segStart = slotIndex / per * per;
+            int inCell = 0;
+            int maxStack = 64;
+            for (int i = segStart; i < segStart + per && i < shelf.Inventory.Count; i++)
             {
-                if (hotbar[i].Empty) { empty = i; break; }
+                var st = shelf.Inventory[i]?.Itemstack;
+                if (st == null) continue;
+                inCell += st.StackSize;
+                maxStack = Math.Max(1, st.Collectible?.MaxStackSize ?? 64);
             }
-            if (empty < 0)
-            {
-                logger.Notification("[SymbioticInventories] Depositing needs one empty hotbar slot.");
-                return;
-            }
+            if (inCell == 0) { Interact(shelf, slotIndex); return; }   // empty cell: native click
 
             job = new TransferJob
             {
                 Shelf = shelf,
                 Slot = slotIndex,
-                Deposit = true,
-                RestoreHotbarIndex = im.ActiveHotbarSlotNumber
+                Deposit = false,
+                Remaining = Math.Min(inCell, maxStack)
             };
-            im.ActiveHotbarSlotNumber = empty;
-            ClickSlot(hotbar, empty);          // carried stack -> working hand (applies locally)
-            job.Remaining = shift ? Math.Min(1, hotbar[empty].StackSize) : hotbar[empty].StackSize;
+            for (int i = 0; i < 10 && i < hotbar.Count; i++)
+            {
+                if (hotbar[i].Empty)
+                {
+                    job.RestoreHotbarIndex = im.ActiveHotbarSlotNumber;
+                    im.ActiveHotbarSlotNumber = i;
+                    break;
+                }
+            }
             Step(0);
         }
 
@@ -393,7 +405,10 @@ namespace SymbioticInventories.Integration
             var j = job;
             job = null;
             if (j == null) return;
-            if (!j.Deposit && j.RestoreHotbarIndex < 0) return;   // take with no working hand: nothing to clean
+            // Cleanup only applies when we SWITCHED to a working slot. A deposit poured
+            // straight from the player's real hand leaves its leftover exactly where it
+            // is - in their hand, where they put it.
+            if (j.RestoreHotbarIndex < 0) return;
 
             int handIndex = capi.World.Player.InventoryManager.ActiveHotbarSlotNumber;
             capi.Event.RegisterCallback(_ =>

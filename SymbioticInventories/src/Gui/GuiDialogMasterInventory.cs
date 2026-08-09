@@ -950,12 +950,23 @@ namespace SymbioticInventories.Gui
                         vy + (relY - scrollY + cell * 0.5) * g,
                         90, (float)(cell * 0.55 * g), ColorUtil.WhiteArgb, true, false, false);
                 }
-                else if (s.Kind == SectionKind.Mount && first.Row > 0)
+                else if (s.Kind == SectionKind.Mount)
                 {
-                    // The blank row above the brick - it exists whenever bags are worn
-                    // (first.Row > 0); with no bags there is no gap and no portrait.
+                    // Saddlebag icon in the margin next to the brick's first row - same
+                    // treatment as the worn bags, so the mount's rows explain themselves.
+                    if (iconMargin > 0 && s.Icon != null && RowVisible(first.Row * cell))
+                    {
+                        iconDrawSlot.Itemstack = s.Icon;
+                        capi.Render.RenderItemstackToGui(iconDrawSlot,
+                            vx - iconMargin * g * 0.5,
+                            vy + (first.Row * cell - scrollY + cell * 0.5) * g,
+                            90, (float)(cell * 0.55 * g), ColorUtil.WhiteArgb, true, false, false);
+                    }
+
+                    // The live portrait stands in the blank row above the brick - it
+                    // exists whenever bags are worn (first.Row > 0).
                     double relY = (first.Row - 1) * cell;
-                    if (!RowVisible(relY)) continue;
+                    if (first.Row <= 0 || !RowVisible(relY)) continue;
                     double cx = vx + first.Cols * 0.5 * cell * g;
                     double bottomY = vy + (relY - scrollY + cell * 0.92) * g;
 
@@ -972,22 +983,35 @@ namespace SymbioticInventories.Gui
                             90, (float)(cell * 0.55 * g), ColorUtil.WhiteArgb, true, false, false);
                     }
                 }
-                else if (s.OnCellClick != null && s.Icon != null)
+                else if (s.Icon != null && s.Numbered && s.Kind != SectionKind.Mount)
                 {
-                    // Shelf/sack marker IN THE GRID: the container block's own picture in
-                    // the blank gutter cell RIGHT of its brick (the layout reserves one
-                    // blank column between bricks - "it would fit great", user), so a sack
-                    // cell reads like the sack you'd be looking at in person: sack picture
-                    // beside the flour type and count.
+                    // Container marker IN THE GRID for every numbered section, so each
+                    // coloured region explains itself without the top filter row (user
+                    // ask). Shelf bricks get the block's picture in the blank gutter cell
+                    // right of the brick ("it would fit great"); everything else gets a
+                    // small picture tucked beside the number badge at the ribbon's first
+                    // cell: [7][chest] reads at a glance.
                     double relY = first.Row * cell;
                     if (!RowVisible(relY)) continue;
-                    int markerCol = first.Col + first.Cols;
-                    if (markerCol >= plan.Cols) continue;   // brick flush with the edge
                     iconDrawSlot.Itemstack = s.Icon;
-                    capi.Render.RenderItemstackToGui(iconDrawSlot,
-                        vx + (markerCol * cell + cell * 0.5) * g,
-                        vy + (relY - scrollY + cell * 0.5) * g,
-                        90, (float)(cell * 0.62 * g), ColorUtil.WhiteArgb, true, false, false);
+
+                    int gutterCol = first.Col + first.Cols;
+                    if (s.OnCellClick != null && gutterCol < plan.Cols)
+                    {
+                        capi.Render.RenderItemstackToGui(iconDrawSlot,
+                            vx + (gutterCol * cell + cell * 0.5) * g,
+                            vy + (relY - scrollY + cell * 0.5) * g,
+                            90, (float)(cell * 0.62 * g), ColorUtil.WhiteArgb, true, false, false);
+                    }
+                    else
+                    {
+                        // Beside the badge: badge sits at +2,+2 size 14; the marker rides
+                        // just right of it, small enough to leave the cell's item readable.
+                        capi.Render.RenderItemstackToGui(iconDrawSlot,
+                            vx + (first.Col * cell + 28) * g,
+                            vy + (relY - scrollY + 12) * g,
+                            90, (float)(18 * g), ColorUtil.WhiteArgb, true, false, false);
+                    }
                 }
             }
         }

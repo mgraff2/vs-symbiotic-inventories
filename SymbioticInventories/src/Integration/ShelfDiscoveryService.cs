@@ -397,9 +397,36 @@ namespace SymbioticInventories.Integration
                 return;
             }
 
-            // Empty-handed: take a whole stack; FoodShelves itself delivers it to the
-            // player (hand or bags), server-side, like the native ctrl-gesture in-world.
+            // Empty-handed: take a whole stack, then lift it onto the CURSOR - a vessel
+            // pickup (user ask: "to my hand, not my belt"). FoodShelves delivers the stack
+            // into the player's inventory itself, wherever it fits; snapshot the hotbar
+            // first, and after the server settles, the slot that GREW is where it landed -
+            // one click moves it to the cursor. If it landed in the bags instead, or the
+            // cursor is busy by then, it simply stays where the mod put it.
+            var before = new int[hotbar.Count];
+            for (int i = 0; i < hotbar.Count; i++) before[i] = hotbar[i].StackSize;
+
             InteractForged(shelf, slotIndex, ctrl: true, shift: false);
+
+            capi.Event.RegisterCallback(_ =>
+            {
+                try
+                {
+                    if (!im.MouseItemSlot.Empty) return;
+                    for (int i = 0; i < hotbar.Count && i < before.Length; i++)
+                    {
+                        if (hotbar[i].StackSize > before[i])
+                        {
+                            ClickSlot(hotbar, i);   // the landed stack -> cursor
+                            return;
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    logger.Warning("[SymbioticInventories] Take-to-cursor lift failed: {0}", e.Message);
+                }
+            }, 350);
         }
 
         /// <summary>An ordinary slot click with the mouse-cursor slot - the exact packets a

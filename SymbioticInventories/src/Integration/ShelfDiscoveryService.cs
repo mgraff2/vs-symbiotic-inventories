@@ -158,12 +158,60 @@ namespace SymbioticInventories.Integration
         }
 
         /// <summary>
+        /// A click on a shelf cell. Empty cursor: plain take (the real interaction pulls
+        /// the item into the player's inventory). Carrying a stack: deposit it - "treat it
+        /// like any grid slot" (user ask) - via the hotbar shuttle below.
+        /// </summary>
+        public void InteractCell(AmbientShelf shelf, int slotIndex)
+        {
+            var mouse = capi.World.Player?.InventoryManager?.MouseItemSlot;
+            if (mouse != null && !mouse.Empty)
+            {
+                DepositCarried(shelf, slotIndex);
+                return;
+            }
+            Interact(shelf, slotIndex);
+        }
+
+        /// <summary>
+        /// Deposits the MOUSE-CARRIED stack into a shelf cell. The block's put interaction
+        /// only consumes from the ACTIVE HOTBAR hand, so the carried stack shuttles
+        /// through it: swap carried into the active hotbar slot (an ordinary,
+        /// server-validated slot click - the sorter's old recipe, verified against
+        /// GuiElementItemSlotGridBase.SlotClick IL), fire the real put interaction, then
+        /// swap the leftover back to the cursor. All three travel one ordered channel, so
+        /// the server always applies swap -> put -> swap-back in sequence; the swap-back
+        /// waits a beat so its client-side prediction runs against the server-corrected
+        /// hand contents instead of the stale full stack.
+        /// </summary>
+        private void DepositCarried(AmbientShelf shelf, int slotIndex)
+        {
+            var player = capi.World.Player;
+            var im = player.InventoryManager;
+            var hotbar = im.GetHotbarInventory();
+            int active = im.ActiveHotbarSlotNumber;
+            if (hotbar == null || active < 0) { Interact(shelf, slotIndex); return; }
+
+            void SwapHand()
+            {
+                var op = new ItemStackMoveOperation(capi.World, EnumMouseButton.Left,
+                    0, (EnumMergePriority)0, 0) { ActingPlayer = player };
+                var packet = hotbar.ActivateSlot(active, im.MouseItemSlot, ref op);
+                if (packet != null) capi.Network.SendPacketClient(packet);
+            }
+
+            SwapHand();                        // carried -> hand, old hand -> cursor
+            Interact(shelf, slotIndex);        // server: FoodShelves TryPut from the hand
+            capi.Event.RegisterCallback(_ => SwapHand(), 450);   // leftover -> cursor, hand restored
+        }
+
+        /// <summary>
         /// Acts on one shelf cell exactly as a right-click on its segment's selection box
         /// would: client-side OnBlockInteractStart plus the Start/StopBlockUse hand packets
         /// (verified pattern from chain-open). The server runs the mod's own interaction -
         /// perms, claims, range, and shelf rules all enforced there.
         /// </summary>
-        public void InteractCell(AmbientShelf shelf, int slotIndex)
+        private void Interact(AmbientShelf shelf, int slotIndex)
         {
             try
             {

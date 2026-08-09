@@ -79,47 +79,69 @@ namespace SymbioticInventories.Core.Layout
             cols = Math.Max(1, cols);
             var plan = new UnifiedPlan();
 
-            var onBody = new List<InventorySection>();
+            // The LEFT BLOCK is the player's own territory: worn bags first, then - after
+            // one blank row - the mount's saddlebags, which ride with the player and belong
+            // visually with them rather than in the world-container flow.
+            var bags = new List<InventorySection>();
+            var mounts = new List<InventorySection>();
             var offBody = new List<InventorySection>();
             foreach (var s in flow)
-                if (s.SlotCount > 0) (IsOnBody(s.Kind) ? onBody : offBody).Add(s);
+            {
+                if (s.SlotCount <= 0) continue;
+                if (IsOnBody(s.Kind)) bags.Add(s);
+                else if (s.Kind == SectionKind.Mount) mounts.Add(s);
+                else offBody.Add(s);
+            }
 
-            // Bag-block width: the biggest bag, capped by the window (an oversized bag wraps).
-            int bagW = 0;
-            foreach (var s in onBody) bagW = Math.Max(bagW, Math.Min(s.SlotCount, cols));
+            // Left-block width: the biggest line, capped by the window (oversized wraps).
+            int blockW = 0;
+            foreach (var s in bags) blockW = Math.Max(blockW, Math.Min(s.SlotCount, cols));
+            foreach (var s in mounts) blockW = Math.Max(blockW, Math.Min(s.SlotCount, cols));
 
-            // Just the player's own storage open: the window is exactly the bag block.
-            plan.Cols = (onBody.Count > 0 && offBody.Count == 0) ? bagW : cols;
+            // Just the player's own territory open: the window is exactly the left block.
+            plan.Cols = (blockW > 0 && offBody.Count == 0) ? blockW : cols;
 
-            // ---- the bag block: one bag per line ----------------------------------
-            int bagRows = 0;
-            foreach (var s in onBody)
+            // ---- the left block: one section per line -----------------------------
+            int leftRows = 0;
+            void AddLine(InventorySection s)
             {
                 int n = s.SlotCount;
-                var ribbon = new Ribbon { Section = s, StartCell = bagRows * plan.Cols };
+                var ribbon = new Ribbon { Section = s, StartCell = leftRows * plan.Cols };
 
-                int full = n / bagW;
+                int full = n / blockW;
                 if (full > 0)
-                    ribbon.Slices.Add(new RibbonSlice { Row = bagRows, Col = 0, Cols = bagW, Rows = full, SlotOffset = 0 });
-                int tail = n - full * bagW;
+                    ribbon.Slices.Add(new RibbonSlice { Row = leftRows, Col = 0, Cols = blockW, Rows = full, SlotOffset = 0 });
+                int tail = n - full * blockW;
                 if (tail > 0)
-                    ribbon.Slices.Add(new RibbonSlice { Row = bagRows + full, Col = 0, Cols = tail, Rows = 1, SlotOffset = full * bagW });
+                    ribbon.Slices.Add(new RibbonSlice { Row = leftRows + full, Col = 0, Cols = tail, Rows = 1, SlotOffset = full * blockW });
 
-                bagRows += (n + bagW - 1) / bagW;
+                leftRows += (n + blockW - 1) / blockW;
                 plan.Ribbons.Add(ribbon);
                 plan.TotalCells += n;
             }
 
-            plan.Rows = bagRows;
+            foreach (var s in bags) AddLine(s);
+            if (bags.Count > 0 && mounts.Count > 0) leftRows++;   // blank row: you / your mount
+            foreach (var s in mounts) AddLine(s);
+
+            plan.Rows = leftRows;
             if (offBody.Count == 0) return plan;
 
-            // ---- off-body containers: beside the bags, then below (the backward L) ----
-            // The gutter column (bagW) stays blank so the two territories read apart.
-            // A window too narrow for a useful side region stacks the containers below.
-            bool lShape = onBody.Count > 0 && cols >= bagW + 1 + MinSideCols;
-            (int a, int b) Span(int r) => lShape && r < bagRows ? (bagW + 1, cols) : (0, cols);
+            // ---- world containers: beside the left block, then below (the backward L) ----
+            // The gutter column (blockW) stays blank so the territories read apart, and one
+            // blank ROW separates the left block from the full-width continuation below. A
+            // window too narrow for a useful side region stacks the containers below instead.
+            bool lShape = leftRows > 0 && cols >= blockW + 1 + MinSideCols;
+            int gapRow = leftRows;   // the blank separator row (only meaningful when leftRows > 0)
 
-            int row = lShape || onBody.Count == 0 ? 0 : bagRows;
+            (int a, int b) Span(int r)
+            {
+                if (lShape && r < leftRows) return (blockW + 1, cols);
+                if (leftRows > 0 && r == gapRow) return (0, 0);   // blank row - nothing lands here
+                return (0, cols);
+            }
+
+            int row = lShape ? 0 : leftRows;
             int col = Span(row).a;
 
             foreach (var s in offBody)
@@ -158,6 +180,11 @@ namespace SymbioticInventories.Core.Layout
             => kind is SectionKind.Crafting or SectionKind.Hotbar
                     or SectionKind.BackpackSlots or SectionKind.Backpack;
 
+        /// <summary>Sections living in the left block: worn bags plus the mount's bags -
+        /// everything that travels with the player.</summary>
+        public static bool IsLeftBlock(SectionKind kind)
+            => IsOnBody(kind) || kind == SectionKind.Mount;
+
         /// <summary>
         /// Columns for the flow, chosen to fill the landscape instead of stacking into a tall
         /// column. Screens are wider than tall, so the grid should be too: aim for the grid's
@@ -191,15 +218,15 @@ namespace SymbioticInventories.Core.Layout
         /// </summary>
         public static int EnsureSideRoom(int cols, IReadOnlyList<InventorySection> flow, int colsScreen)
         {
-            int bagW = 0; bool off = false;
+            int blockW = 0; bool off = false;
             foreach (var s in flow)
             {
                 if (s.SlotCount <= 0) continue;
-                if (IsOnBody(s.Kind)) bagW = Math.Max(bagW, s.SlotCount);
+                if (IsLeftBlock(s.Kind)) blockW = Math.Max(blockW, s.SlotCount);
                 else off = true;
             }
-            if (bagW == 0 || !off) return cols;
-            return Math.Min(Math.Max(cols, bagW + 1 + 8), Math.Max(cols, colsScreen));
+            if (blockW == 0 || !off) return cols;
+            return Math.Min(Math.Max(cols, blockW + 1 + 8), Math.Max(cols, colsScreen));
         }
     }
 }

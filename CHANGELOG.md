@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Saddlebags live under your bags.** The mount's inventory joins the player's left block -
+  worn bags, a blank row, then the saddlebags - instead of flowing with world containers.
+  A blank row also separates the left block from containers continuing below it.
 - **Hover glow, both directions.** Hovering a grid cell lights up its container's tile in
   the vessel row; hovering a tile makes that container's whole ribbon glow.
 - **Backward-L layout.** Worn bags are a fixed block top-left - one bag per line, block width

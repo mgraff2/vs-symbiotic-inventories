@@ -81,6 +81,12 @@ $scenarios = @{
         (New-Section 'Sturdy 3' 'Backpack' 8 3),
         (New-Section 'Sturdy 4' 'Backpack' 8 4)
     )
+    # Riding with no containers open - bags, one blank row, then the saddlebags.
+    'riding' = @(
+        (New-Section 'Sturdy 1'  'Backpack' 8 1),
+        (New-Section 'Sturdy 2'  'Backpack' 8 2),
+        (New-Section 'Saddlebag' 'Mount'   12 3)
+    )
     'typical' = @(
         (New-Section 'Hunter bag'  'Backpack'       16 1),
         (New-Section 'Leather bag' 'Backpack'       16 2),
@@ -123,7 +129,9 @@ $scenarios = @{
 
 $failures = @()
 
-$onBodyKinds = @('Crafting', 'Hotbar', 'BackpackSlots', 'Backpack')
+# The LEFT BLOCK kinds: worn bags plus the mount's saddlebags (Mount sits under the bags
+# after a blank row - it travels with the player, so it lives in the player's territory).
+$onBodyKinds = @('Crafting', 'Hotbar', 'BackpackSlots', 'Backpack', 'Mount')
 
 function Test-Plan($name, $plan) {
     $W = $plan.Cols
@@ -269,7 +277,7 @@ Write-Host ""
 
 $ensure = $TGrid.GetMethod('EnsureSideRoom')
 
-foreach ($scenarioName in @('minimal', 'solo', 'typical', 'boat', 'warehouse', 'heavy')) {
+foreach ($scenarioName in @('minimal', 'solo', 'riding', 'typical', 'boat', 'warehouse', 'heavy')) {
     foreach ($cols in @(24, 8)) {
         $modeName = if ($cols -eq 8) { 'DockLeft' } else { 'Auto' }
         $list = New-SectionList $scenarios[$scenarioName]

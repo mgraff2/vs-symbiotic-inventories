@@ -35,6 +35,7 @@ namespace SymbioticInventories.Gui
 
         private const string ChromeKey = "chrome";
         private const string ScrollKey = "scrollbar";
+        private const string StripGlowKey = "stripglow";
 
         private const double Pad = 10;
         private const double FooterH = 30;
@@ -122,6 +123,14 @@ namespace SymbioticInventories.Gui
         /// <summary>Cached "#N Container" hover label texture and the key it was baked for.</summary>
         private LoadedTexture hoverTex;
         private string hoverTexKey;
+
+        /// <summary>Section whose vessel tile glows because the cursor is on one of its
+        /// flow cells (cell -> tile direction of the hover link).</summary>
+        private string glowTileId;
+
+        /// <summary>Section whose whole ribbon glows because the cursor is on its vessel
+        /// tile (tile -> cells direction). Its tile lights up too.</summary>
+        private string glowRibbonId;
 
         public GuiDialogMasterInventory(ICoreClientAPI capi, SectionRegistry registry) : base(capi)
         {
@@ -290,6 +299,36 @@ namespace SymbioticInventories.Gui
             }
 
             base.OnMouseDown(args);
+        }
+
+        /// <summary>Hover link, tile -> cells: cursor on a vessel tile lights its ribbon.</summary>
+        public override void OnMouseMove(MouseEvent args)
+        {
+            base.OnMouseMove(args);
+            if (Suppressed || !IsOpened()) { SetRibbonGlow(null); return; }
+
+            InventorySection hit = null;
+            foreach (var (_, _, bounds, s) in iconTiles)
+            {
+                if (bounds.PointInside(args.X, args.Y)) { hit = s; break; }
+            }
+            SetRibbonGlow(hit?.Id);
+        }
+
+        /// <summary>Change-detected: redraws only when the glowing tile actually changes.</summary>
+        private void SetTileGlow(string id)
+        {
+            if (glowTileId == id) return;
+            glowTileId = id;
+            (SingleComposer?.GetElement(StripGlowKey) as GuiElementCustomDraw)?.Redraw();
+        }
+
+        private void SetRibbonGlow(string id)
+        {
+            if (glowRibbonId == id) return;
+            glowRibbonId = id;
+            (SingleComposer?.GetElement(StripGlowKey) as GuiElementCustomDraw)?.Redraw();
+            (SingleComposer?.GetElement(ChromeKey) as GuiElementCustomDraw)?.Redraw();
         }
 
         // ---- composition --------------------------------------------------------
@@ -514,6 +553,13 @@ namespace SymbioticInventories.Gui
                 ElementBounds.Fixed(contentX, 0, bodyW - contentX, TitleH + stripH),
                 (ctx, surface, bounds) => DrawStripChrome(ctx, bounds));
 
+            // Hover glow OVER the strip. The badge chrome above is static - baked once at
+            // compose - so a glow drawn there would be frozen; this layer is dynamic and
+            // redraws on hover changes. Dynamic draw = own surface, LOCAL coordinates.
+            composer.AddDynamicCustomDraw(
+                ElementBounds.Fixed(contentX, 0, bodyW - contentX, TitleH + stripH),
+                (ctx, surface, bounds) => DrawStripGlow(ctx), StripGlowKey);
+
             // ---- scrolling flow -------------------------------------------------
             var viewport = ElementBounds.Fixed(contentX, scrollStart, flowW, Math.Max(viewportH, 1));
 
@@ -594,7 +640,13 @@ namespace SymbioticInventories.Gui
             try
             {
                 var hovered = capi.World?.Player?.InventoryManager?.CurrentHoveredSlot;
-                if (hovered == null || !slotToSection.TryGetValue(hovered, out var s)) return;
+                InventorySection s = null;
+                if (hovered != null) slotToSection.TryGetValue(hovered, out s);
+
+                // Hover link, cells -> tile: the hovered cell's container lights up in the
+                // vessel row (and clears the moment nothing relevant is hovered).
+                SetTileGlow(s?.Id);
+                if (s == null) return;
 
                 string key = "#" + s.Number + " " + s.Label;
                 if (hoverTex == null || hoverTexKey != key)
@@ -805,17 +857,66 @@ namespace SymbioticInventories.Gui
 
                 // Strong enough that every cell visibly carries its container's colour (the
                 // user's ask), still light enough that item sprites stay readable on top.
-                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.20);
+                // Hovering the section's vessel tile lights the whole ribbon: deeper wash,
+                // outer halo, hard bright rim.
+                bool glow = s.Id == glowRibbonId;
+
+                ctx.SetSourceRGBA(a[0], a[1], a[2], glow ? 0.45 : 0.20);
                 Trace();
                 ctx.Fill();
 
-                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.65);
-                ctx.LineWidth = 1.5 * g;
+                if (glow)
+                {
+                    ctx.SetSourceRGBA(a[0], a[1], a[2], 0.35);
+                    ctx.LineWidth = 6 * g;
+                    Trace();
+                    ctx.Stroke();
+                }
+
+                ctx.SetSourceRGBA(a[0], a[1], a[2], glow ? 1.0 : 0.65);
+                ctx.LineWidth = (glow ? 2.5 : 1.5) * g;
                 Trace();
                 ctx.Stroke();
 
                 var f = ribbon.Slices[0];
                 DrawBadge(ctx, f.Col * cell + 2 * g, oy + f.Row * cell + 2 * g, 14 * g, s.Number, a);
+            }
+        }
+
+        /// <summary>
+        /// The glow layer for the vessel row: the tile of the section under the cursor -
+        /// reached through its cells (glowTileId) or hovered directly (glowRibbonId) -
+        /// lights up in its accent colour. LOCAL coordinates (dynamic draw, own surface):
+        /// the element starts at (contentX, 0) in dialog units, so subtract contentX.
+        /// </summary>
+        private void DrawStripGlow(Context ctx)
+        {
+            string id = glowRibbonId ?? glowTileId;
+            if (id == null) return;
+
+            double g = RuntimeEnv.GUIScale;
+            foreach (var (ix, iy, _, s) in iconTiles)
+            {
+                if (s.Id != id) continue;
+                var a = s.Accent;
+                double x = (ix - contentX) * g, y = iy * g, t = IconTile * g;
+
+                // Soft halo around the tile, a wash across it, and a hard rim: reads as
+                // "lit" over any icon art without hiding it.
+                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.30);
+                ctx.LineWidth = 6 * g;
+                GuiElement.RoundRectangle(ctx, x - 3 * g, y - 3 * g, t + 6 * g, t + 6 * g, 3 * g);
+                ctx.Stroke();
+
+                ctx.SetSourceRGBA(a[0], a[1], a[2], 0.28);
+                GuiElement.RoundRectangle(ctx, x, y, t, t, 2 * g);
+                ctx.Fill();
+
+                ctx.SetSourceRGBA(a[0], a[1], a[2], 1.0);
+                ctx.LineWidth = 2 * g;
+                GuiElement.RoundRectangle(ctx, x, y, t, t, 2 * g);
+                ctx.Stroke();
+                break;
             }
         }
 

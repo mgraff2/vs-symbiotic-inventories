@@ -143,6 +143,11 @@ namespace SymbioticInventories.Gui
         /// <summary>Reused for the frame-time icon draws (the stack overload is obsolete).</summary>
         private readonly DummySlot iconDrawSlot = new();
 
+        /// <summary>Nearest quern in working range, refreshed each compose. Its two slots
+        /// render as a side-station top-right of the strip; null hides the panel.</summary>
+        private BlockPos quernPos;
+        private IInventory quernInv;
+
         public GuiDialogMasterInventory(ICoreClientAPI capi, SectionRegistry registry) : base(capi)
         {
             this.registry = registry;
@@ -478,10 +483,17 @@ namespace SymbioticInventories.Gui
             plan = UnifiedGrid.Compute(flowSections, cols);
             double flowW = plan.Cols * LayoutMetrics.Cell;
 
+            // Quern side-station discovery: reserve its corner of the strip before the
+            // vessel tiles compute their wrap width, so the tiles never collide with it.
+            var quern = Capture?.FindNearbyQuern();
+            quernPos = quern?.pos;
+            quernInv = quern?.inv;
+            double quernW = quernInv != null ? IconTile + 6 + 2 * LayoutMetrics.Cell + 8 : 0;
+
             // Vessel row: group chips + tiles, wrapping within the grid width beside crafting
             // and bags. ALL numbered sections get a tile - hidden ones render dimmed. Each
             // group (chests / vessels / backpacks) is prefixed by a narrow toggle chip.
-            double iconAreaW = Math.Max(IconTile + ChipW, flowW - iconAreaX);
+            double iconAreaW = Math.Max(IconTile + ChipW, flowW - iconAreaX - quernW);
 
             var stripItems = new List<(bool isChip, InventorySection s, List<InventorySection> members, double w)>();
             {
@@ -628,6 +640,34 @@ namespace SymbioticInventories.Gui
             composer.AddDynamicCustomDraw(
                 ElementBounds.Fixed(contentX, 0, bodyW - contentX, TitleH + stripH),
                 (ctx, surface, bounds) => DrawStripGlow(ctx), StripGlowKey);
+
+            // Quern side-station, top-right of the strip: the quern's icon beside its two
+            // slots (input, output). NOT a capture - the quern keeps its own dialog with
+            // its progress bar for real right-clicks. These slots bind the block entity's
+            // inventory headlessly; clicks travel the same block-entity packet envelope
+            // the quern's own dialog uses, so the server treats them identically, and
+            // contents stay fresh through ordinary block-entity sync as it grinds.
+            if (quernInv != null && quernPos != null)
+            {
+                double qx = contentX + iconMargin + flowW - quernW + 8;
+                double qy = TitleH;
+                var qpos = quernPos.Copy();
+
+                var block = capi.World.BlockAccessor.GetBlock(qpos);
+                if (block != null && block.Id != 0)
+                {
+                    var slot = new DummySlot(new ItemStack(block));
+                    iconSlots.Add(slot);   // keep alive for the composer's lifetime
+                    composer.AddPassiveItemSlot(
+                        ElementBounds.Fixed(qx, qy + (LayoutMetrics.Cell - IconTile) / 2, IconTile, IconTile),
+                        quernInv as InventoryBase, slot, false, "quern-icon");
+                }
+
+                var gridB = ElementStdBounds.SlotGrid(EnumDialogArea.None, qx + IconTile + 6, qy, 2, 1);
+                composer.AddItemSlotGrid(quernInv,
+                    p => capi.Network.SendBlockEntityPacket(qpos.X, qpos.Y, qpos.Z, p),
+                    2, new[] { 0, 1 }, gridB, "grid-quern");
+            }
 
             // ---- scrolling flow -------------------------------------------------
             var viewport = ElementBounds.Fixed(contentX + iconMargin, scrollStart, flowW, Math.Max(viewportH, 1));

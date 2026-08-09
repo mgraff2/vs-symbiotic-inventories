@@ -5,6 +5,7 @@ using SymbioticInventories.Integration;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
+using Vintagestory.API.MathTools;
 
 namespace SymbioticInventories
 {
@@ -92,12 +93,22 @@ namespace SymbioticInventories
             // walk-by queue (containers past pick range open as the player nears them).
             // 500 ms is imperceptible and both services skip what is already open.
             bool lastCatalogOpen = false;
+            BlockPos lastQuernPos = null;
             api.Event.RegisterGameTickListener(_ =>
             {
                 if (window.IsOpened())
                 {
                     entityContainers.Discover();
                     capture.TickPendingOpens();
+
+                    // Quern side-station follows the player: recompose when the nearest
+                    // quern changes (walked into range, away, or to a different quern).
+                    var qp = capture.FindNearbyQuern()?.pos;
+                    if (!Equals(qp, lastQuernPos))
+                    {
+                        lastQuernPos = qp;
+                        window.Refresh();
+                    }
                 }
                 else
                 {

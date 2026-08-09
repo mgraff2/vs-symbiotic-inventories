@@ -384,6 +384,34 @@ namespace SymbioticInventories.Integration
         public void ClearPendingOpens() => pendingOpens.Clear();
 
         /// <summary>
+        /// The nearest quern within working range, or null. Deliberately NOT a capture:
+        /// machines keep their own dialogs (the quern's window carries grind progress and
+        /// must keep appearing on a real right-click). The master window instead renders a
+        /// tiny side-station bound directly to this inventory - contents stay fresh via
+        /// ordinary block-entity sync, and slot clicks travel the same block-entity packet
+        /// envelope the quern's own dialog uses.
+        /// </summary>
+        public (BlockPos pos, IInventory inv)? FindNearbyQuern(int radius = 5)
+        {
+            var center = capi.World?.Player?.Entity?.Pos?.AsBlockPos;
+            if (center == null) return null;
+
+            var ba = capi.World.BlockAccessor;
+            (BlockPos, IInventory)? best = null;
+            int bestD = int.MaxValue;
+            for (int dx = -radius; dx <= radius; dx++)
+            for (int dy = -2; dy <= 2; dy++)
+            for (int dz = -radius; dz <= radius; dz++)
+            {
+                var p = center.AddCopy(dx, dy, dz);
+                if (!(ba.GetBlockEntity(p) is BlockEntityQuern q) || q.Inventory == null || q.Inventory.Count < 2) continue;
+                int d = dx * dx + dy * dy + dz * dz;
+                if (d < bestD) { bestD = d; best = (p, q.Inventory); }
+            }
+            return best;
+        }
+
+        /// <summary>
         /// A container the auto-open paths may safely right-click: one whose right-click
         /// OPENS A DIALOG. BlockEntityOpenableContainer is the vanilla base carrying exactly
         /// that contract, and it is what chests, vessels and baskets derive from.

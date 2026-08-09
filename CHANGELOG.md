@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Quern side-station.** With a quern in working range (~5 blocks), its icon plus its two
+  slots (input, output) appear top-right in the window's strip - pull grain straight from
+  your inventory into the quern and take the flour out, without opening its own window.
+  Not a capture: right-clicking the quern still shows its normal dialog with the grind
+  progress bar. The panel follows you - walk away and it folds up.
 - **Creative mode: one combined surface.** In creative, the inventory key opens the creative
   catalog AND the master window together, and the master window reads the catalog's live
   bounds and fits itself seamlessly into the free space beside it - no overlap, both fully

@@ -457,8 +457,12 @@ namespace SymbioticInventories.Gui
 
                     if (maxX > double.MinValue)
                     {
-                        coopAvailW = screenW - maxX / scale - Pad * 2 - 8;
-                        coop = coopAvailW >= 9 * LayoutMetrics.Cell;   // enough for a real grid
+                        // ALWAYS snap right of the catalog (user rule). A cramped screen
+                        // gets a narrow scrolling grid rather than a centered window under
+                        // the catalog - and any residual overlap lands on the catalog's
+                        // tab-free right edge, never its tab column.
+                        coopAvailW = Math.Max(4 * LayoutMetrics.Cell, screenW - maxX / scale - Pad * 2 - 8);
+                        coop = true;
                     }
                 }
             }

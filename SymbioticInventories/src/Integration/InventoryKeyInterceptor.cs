@@ -41,14 +41,28 @@ namespace SymbioticInventories.Integration
             if (Config == null || Window == null) return true;              // not wired yet
             if (!Config.OpenOnInventoryKey) return true;                    // option off: vanilla as normal
 
-            Window.Toggle();
-            if (Window.IsOpened()) Entities?.Discover();
-
             if (Capi?.World?.Player?.WorldData?.CurrentGameMode == EnumGameMode.Creative)
             {
-                return true;   // creative: ALSO run the vanilla toggle - that is the catalog
+                // Creative: the vanilla toggle runs too (that IS the catalog), so PHASE-
+                // LOCK to it - mirror the state the catalog is about to flip into. A blind
+                // Toggle() drifts out of phase the moment one side opens or closes alone
+                // (gamemode switch mid-session, container auto-open), after which E
+                // alternates the two windows forever instead of pairing them.
+                bool catalogWillOpen = !__instance.IsOpened();
+                if (catalogWillOpen)
+                {
+                    Window.TryOpen();
+                    Entities?.Discover();
+                }
+                else
+                {
+                    Window.TryClose();
+                }
+                return true;
             }
 
+            Window.Toggle();
+            if (Window.IsOpened()) Entities?.Discover();
             __result = true;   // the key was consumed
             return false;      // skip the vanilla inventory toggle
         }

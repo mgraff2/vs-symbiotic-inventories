@@ -64,5 +64,28 @@ namespace SymbioticInventories.Integration
             if (Capi?.World?.Player?.WorldData?.CurrentGameMode != EnumGameMode.Creative) return;
             Window?.Refresh();
         }
+
+        /// <summary>
+        /// Safety net for opens that BYPASS the hotkey toggle: the new-player tutorial and
+        /// first-spawn flows open the vanilla inventory dialog directly via TryOpen, so the
+        /// toggle prefix never sees them (real case: fresh survival world, E showed the
+        /// vanilla screen). Fires from the base OnGuiOpened; in survival with the option
+        /// on, the vanilla inventory is closed and the master window opens instead -
+        /// deferred one tick, because closing a dialog inside its own OnGuiOpened call
+        /// stack invites reentrancy trouble. Creative keeps the catalog, as always.
+        /// </summary>
+        public static void OpenedPostfix(GuiDialog __instance)
+        {
+            if (Config == null || Window == null || Capi == null) return;
+            if (!Config.OpenOnInventoryKey) return;
+            if (__instance.ToggleKeyCombinationCode != "inventorydialog") return;
+            if (Capi.World?.Player?.WorldData?.CurrentGameMode == EnumGameMode.Creative) return;
+
+            Capi.Event.EnqueueMainThreadTask(() =>
+            {
+                if (__instance.IsOpened()) __instance.TryClose();
+                if (!Window.IsOpened()) Window.TryOpen();
+            }, "symbioticinventories-redirect");
+        }
     }
 }

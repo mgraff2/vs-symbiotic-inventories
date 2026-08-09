@@ -86,6 +86,12 @@ namespace SymbioticInventories
                 AccessTools.Method(typeof(GuiDialog), "OnKeyCombinationToggle"),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(InventoryKeyInterceptor), nameof(InventoryKeyInterceptor.Prefix))),
                 postfix: new HarmonyMethod(AccessTools.Method(typeof(InventoryKeyInterceptor), nameof(InventoryKeyInterceptor.Postfix))));
+            // The safety net: catches opens that bypass the toggle (tutorial / first-spawn
+            // open the vanilla inventory via TryOpen directly). Base-method patch; every
+            // dialog's OnGuiOpened calls through it, filtered by toggle code inside.
+            harmony.Patch(
+                AccessTools.Method(typeof(GuiDialog), "OnGuiOpened"),
+                postfix: new HarmonyMethod(AccessTools.Method(typeof(InventoryKeyInterceptor), nameof(InventoryKeyInterceptor.OpenedPostfix))));
 
             // Opening a chest has to bring the master window up, otherwise capturing it
             // would just make the container disappear with nowhere to show its contents.

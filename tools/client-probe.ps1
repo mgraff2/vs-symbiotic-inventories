@@ -121,16 +121,26 @@ if ($game) { [Win32]::SetForegroundWindow($game.MainWindowHandle) | Out-Null; St
 
 Save-Screen "$shots\1-world.png"
 
-# B = 0x42. Key down, key up.
-[Win32]::keybd_event(0x42, 0, 0, [UIntPtr]::Zero)
-Start-Sleep -Milliseconds 120
-[Win32]::keybd_event(0x42, 0, 2, [UIntPtr]::Zero)
-Start-Sleep 2
+function Press-Key([byte]$vk) {
+    [Win32]::keybd_event($vk, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 120
+    [Win32]::keybd_event($vk, 0, 2, [UIntPtr]::Zero)
+    Start-Sleep 2
+}
 
+# B = 0x42: the window's own hotkey.
+Press-Key 0x42
 Save-Screen "$shots\2-master-window.png"
 
-Write-Host "Screenshots: $shots\1-world.png, 2-master-window.png" -ForegroundColor Green
-Write-Host "LOOK AT THEM - a blank or vanilla-looking frame in shot 2 is a failure, not a pass."
+# Close it (B again), then E = 0x45: the vanilla inventory key, which the interceptor
+# must redirect to the master window. A vanilla inventory screen in shot 3 means the
+# E-redirect is broken.
+Press-Key 0x42
+Press-Key 0x45
+Save-Screen "$shots\3-e-key.png"
+
+Write-Host "Screenshots: $shots\1-world.png, 2-master-window.png, 3-e-key.png" -ForegroundColor Green
+Write-Host "LOOK AT THEM - a blank or vanilla-looking frame in shots 2/3 is a failure, not a pass."
 
 if (-not $KeepOpen) {
     Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue

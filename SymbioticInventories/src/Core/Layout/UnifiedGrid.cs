@@ -133,17 +133,17 @@ namespace SymbioticInventories.Core.Layout
             if (offBody.Count == 0) return plan;
 
             // ---- world containers: beside the left block, then below (the backward L) ----
-            // The gutter column (blockW) stays blank so the territories read apart. The
-            // container flow itself is CONTINUOUS: side rows run straight into the
-            // full-width rows with no blank row between (user ask - a hole mid-flow read
-            // as a break in the containers, and the gutter already does the separating).
-            // Only the stacked fallback keeps a blank row before the containers, because
-            // there it is the sole separator from the left block.
+            // The gutter column (blockW) stays blank so the territories read apart, and the
+            // side span extends ONE ROW past the left block: that row keeps the container
+            // flow continuous on the right while leaving a blank buffer line under the
+            // block itself (both user asks - no hole mid-flow, and a breath of air between
+            // the saddlebags and the full-width container rows). The stacked fallback keeps
+            // its blank row: there it is the sole separator from the left block.
             bool lShape = leftRows > 0 && cols >= blockW + 1 + MinSideCols;
 
             (int a, int b) Span(int r)
             {
-                if (lShape && r < leftRows) return (blockW + 1, cols);
+                if (lShape && r <= leftRows) return (blockW + 1, cols);
                 if (!lShape && leftRows > 0 && r == leftRows) return (0, 0);   // stacked: blank separator row
                 return (0, cols);
             }

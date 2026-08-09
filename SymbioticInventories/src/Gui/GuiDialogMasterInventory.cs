@@ -143,13 +143,15 @@ namespace SymbioticInventories.Gui
         /// <summary>Reused for the frame-time icon draws (the stack overload is obsolete).</summary>
         private readonly DummySlot iconDrawSlot = new();
 
-        /// <summary>Nearest quern in working range, refreshed each compose. Its two slots
-        /// render as a side-station top-right of the strip; null hides the panel.</summary>
-        private BlockPos quernPos;
-        private IInventory quernInv;
+        /// <summary>Nearby machine side-stations (querns and the firepit family - vanilla
+        /// firepits, the stone oven's controller and cooking top), refreshed each compose.
+        /// Their fuel/input/output slots render top-right of the strip with REAL slot
+        /// semantics (openable containers have the packet route).</summary>
+        private List<Integration.DialogCaptureService.MachineInfo> machines = new();
 
-        /// <summary>The quern OUTPUT slot's bounds - deposit clicks on it are swallowed.</summary>
-        private ElementBounds quernOutBounds;
+        /// <summary>OUTPUT slot bounds across all machine panels - deposit clicks on them
+        /// are swallowed, and each carries the down-arrow marker.</summary>
+        private readonly List<ElementBounds> machineOutBounds = new();
 
         /// <summary>Slot grids belonging to synthetic-interaction sections (FoodShelves):
         /// clicks on them are swallowed and become real block interactions.</summary>
@@ -291,14 +293,19 @@ namespace SymbioticInventories.Gui
             if (Suppressed) return;   // invisible under the Options panel: let it take the click
             if (IsOpened() && !args.Handled)
             {
-                // Quern OUTPUT is output-only: swallow any click that would deposit (the
-                // mouse is carrying a stack). Taking with an empty hand falls through to
-                // the slot grid as normal.
-                if (quernOutBounds != null && quernOutBounds.PointInside(args.X, args.Y)
-                    && capi.World.Player.InventoryManager.MouseItemSlot?.Empty == false)
+                // Machine OUTPUT slots are output-only: swallow any click that would
+                // deposit (the mouse is carrying a stack). Taking with an empty hand
+                // falls through to the slot grid as normal.
+                if (capi.World.Player.InventoryManager.MouseItemSlot?.Empty == false)
                 {
-                    args.Handled = true;
-                    return;
+                    foreach (var ob in machineOutBounds)
+                    {
+                        if (ob.PointInside(args.X, args.Y))
+                        {
+                            args.Handled = true;
+                            return;
+                        }
+                    }
                 }
 
                 // Shelf cells (FoodShelves): there is no slot packet route, so a click
@@ -526,12 +533,11 @@ namespace SymbioticInventories.Gui
             iconMargin = plan.Ribbons.Exists(r => UnifiedGrid.IsLeftBlock(r.Section.Kind))
                 ? LayoutMetrics.Cell * 0.8 : 0;
 
-            // Quern side-station discovery: reserve its corner of the strip before the
-            // vessel tiles compute their wrap width, so the tiles never collide with it.
-            var quern = Capture?.FindNearbyQuern();
-            quernPos = quern?.pos;
-            quernInv = quern?.inv;
-            double quernW = quernInv != null ? IconTile + 6 + 2 * LayoutMetrics.Cell + 8 : 0;
+            // Machine side-station discovery: reserve their corner of the strip before the
+            // vessel tiles compute their wrap width, so the tiles never collide with them.
+            machines = Capture?.FindNearbyMachines() ?? new List<Integration.DialogCaptureService.MachineInfo>();
+            double machinesW = 0;
+            foreach (var m in machines) machinesW += IconTile + 6 + m.Slots.Length * LayoutMetrics.Cell + 8;
 
             // Vessel row: group chips + tiles, wrapping beside crafting and bags. ALL
             // numbered sections get a tile - hidden ones render dimmed. Never let the
@@ -540,7 +546,7 @@ namespace SymbioticInventories.Gui
             // it - a short wide strip beats a tall blank top (real report: the mounted
             // window was a long vertical with empty space up top).
             double iconAreaW = Math.Max(6 * (IconTile + 4) + ChipW,
-                iconMargin + flowW - iconAreaX - quernW);
+                iconMargin + flowW - iconAreaX - machinesW);
 
             var stripItems = new List<(bool isChip, InventorySection s, List<InventorySection> members, double w)>();
             {
@@ -597,7 +603,7 @@ namespace SymbioticInventories.Gui
 
             // The window is as wide as its widest occupant: the flow grid, or the strip
             // (crafting + bags + tiles + quern) when the grid is the narrow one.
-            double stripRightW = Math.Max(iconMargin + flowW, iconAreaX + iconAreaW + quernW);
+            double stripRightW = Math.Max(iconMargin + flowW, iconAreaX + iconAreaW + machinesW);
             double bodyW = contentX + stripRightW + (scrolls ? 20 : 0);
             double bodyH = TitleH + stripH + Math.Max(viewportH, 60) + FooterH + Pad;
 
@@ -686,52 +692,49 @@ namespace SymbioticInventories.Gui
                 ElementBounds.Fixed(contentX, 0, bodyW - contentX, TitleH + stripH),
                 (ctx, surface, bounds) => DrawStripGlow(ctx), StripGlowKey);
 
-            // Quern side-station, top-right of the strip: the quern's icon beside its two
-            // slots (input, output). NOT a capture - the quern keeps its own dialog with
-            // its progress bar for real right-clicks. These slots bind the block entity's
-            // inventory headlessly; clicks travel the same block-entity packet envelope
-            // the quern's own dialog uses, so the server treats them identically, and
-            // contents stay fresh through ordinary block-entity sync as it grinds.
-            if (quernInv != null && quernPos != null)
+            // Machine side-stations, top-right of the strip: each nearby quern or
+            // firepit-family machine (vanilla firepit, stone oven controller/cooking top)
+            // shows its icon beside its working slots - fuel, input, output. NOT captures:
+            // machines keep their own dialogs with progress bars for real right-clicks.
+            // These are openable containers, so the slots have REAL semantics: clicks
+            // travel the same block-entity packet envelope their own dialogs use, and
+            // contents stay fresh via block-entity sync as they burn and cook.
+            machineOutBounds.Clear();
             {
-                double qx = contentX + stripRightW - quernW + 8;
-                double qy = TitleH;
-                var qpos = quernPos.Copy();
-
-                var block = capi.World.BlockAccessor.GetBlock(qpos);
-                if (block != null && block.Id != 0)
+                double mpx = contentX + stripRightW - machinesW + 8;
+                foreach (var m in machines)
                 {
-                    var slot = new DummySlot(new ItemStack(block));
-                    iconSlots.Add(slot);   // keep alive for the composer's lifetime
-                    composer.AddPassiveItemSlot(
-                        ElementBounds.Fixed(qx, qy + (LayoutMetrics.Cell - IconTile) / 2, IconTile, IconTile),
-                        quernInv as InventoryBase, slot, false, "quern-icon");
+                    var mpos = m.Pos.Copy();
+                    var mblock = capi.World.BlockAccessor.GetBlock(mpos);
+                    if (mblock != null && mblock.Id != 0)
+                    {
+                        var mslot = new DummySlot(new ItemStack(mblock));
+                        iconSlots.Add(mslot);   // keep alive for the composer's lifetime
+                        composer.AddPassiveItemSlot(
+                            ElementBounds.Fixed(mpx, TitleH + (LayoutMetrics.Cell - IconTile) / 2, IconTile, IconTile),
+                            m.Inv as InventoryBase, mslot, false, "machine-icon-" + mpos);
+                    }
+                    mpx += IconTile + 6;
+
+                    Action<object> send = pkt => capi.Network.SendBlockEntityPacket(mpos.X, mpos.Y, mpos.Z, pkt);
+                    var gb = ElementStdBounds.SlotGrid(EnumDialogArea.None, mpx, TitleH, m.Slots.Length, 1);
+                    composer.AddItemSlotGrid(m.Inv, send, m.Slots.Length, m.Slots, gb, "grid-machine-" + mpos);
+
+                    int outIdx = m.OutputSlot >= 0 ? Array.IndexOf(m.Slots, m.OutputSlot) : -1;
+                    if (outIdx >= 0)
+                    {
+                        // The arrow must be an element ADDED AFTER the grid: above the
+                        // opaque slot box, below the item sprites - visible while empty,
+                        // covered by the product (the baked-plate gotcha, learnt twice).
+                        var ob = ElementBounds.Fixed(mpx + outIdx * LayoutMetrics.Cell, TitleH,
+                            LayoutMetrics.Cell, LayoutMetrics.Cell);
+                        machineOutBounds.Add(ob);
+                        composer.AddDynamicCustomDraw(ob, (ctx, surface, b) => DrawQuernArrow(ctx),
+                            "machinearrow-" + mpos);
+                    }
+
+                    mpx += m.Slots.Length * LayoutMetrics.Cell + 8;
                 }
-
-                Action<object> send = p => capi.Network.SendBlockEntityPacket(qpos.X, qpos.Y, qpos.Z, p);
-
-                var inB = ElementStdBounds.SlotGrid(EnumDialogArea.None, qx + IconTile + 6, qy, 1, 1);
-                composer.AddItemSlotGrid(quernInv, send, 1, new[] { 0 }, inB, "grid-quernin");
-
-                // Output as its OWN grid so it can be click-gated (no depositing) and
-                // marked with the down-arrow.
-                double outX = qx + IconTile + 6 + LayoutMetrics.Cell;
-                var outB = ElementStdBounds.SlotGrid(EnumDialogArea.None, outX, qy, 1, 1);
-                composer.AddItemSlotGrid(quernInv, send, 1, new[] { 1 }, outB, "grid-quernout");
-                quernOutBounds = outB;
-
-                // The arrow must be an element ADDED AFTER the grid: it then paints above
-                // the opaque slot-box texture but below the item sprites (which render in
-                // the later PostRender stage) - visible while the slot is empty, covered
-                // by the flour once there is output. A static draw under the slot texture
-                // never shows at all - the baked-plate gotcha, hit once already.
-                composer.AddDynamicCustomDraw(
-                    ElementBounds.Fixed(outX, qy, LayoutMetrics.Cell, LayoutMetrics.Cell),
-                    (ctx, surface, b) => DrawQuernArrow(ctx), "quernarrow");
-            }
-            else
-            {
-                quernOutBounds = null;
             }
 
             // ---- scrolling flow -------------------------------------------------

@@ -79,6 +79,29 @@ namespace SymbioticInventories.Integration
         /// runtime dictionary, which may be empty on the client.</summary>
         private Dictionary<string, string[]> assetRestrictions;
 
+        // Stone Bake Oven soft dependency: its baking-top type carries no stable
+        // namespace across versions, so resolve by short name over loaded assemblies.
+        private Type bakingTopType;
+        private bool bakingProbed;
+
+        private Type BakingTopType()
+        {
+            if (bakingProbed) return bakingTopType;
+            bakingProbed = true;
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    foreach (var ty in asm.GetTypes())
+                    {
+                        if (ty.Name == "BlockEntityOvenBakingTop") { bakingTopType = ty; return ty; }
+                    }
+                }
+                catch { /* dynamic/unloadable assemblies: skip */ }
+            }
+            return null;
+        }
+
         private Dictionary<string, string[]> AssetRestrictions()
         {
             if (assetRestrictions != null) return assetRestrictions;
@@ -248,6 +271,36 @@ namespace SymbioticInventories.Integration
                         Facade = true,
                         Label = cstack?.GetName() ?? "?",
                         Icon = cstack
+                    }));
+                    continue;
+                }
+
+                // STONE BAKE OVEN baking surface: display-style (click-to-place doughs on
+                // spots, no dialog), so it presents as a per-item grid like a shelf. The
+                // firing state stays at the block - only the spots join the window.
+                var btT = BakingTopType();
+                if (btT != null && btT.IsInstanceOfType(be) && be is BlockEntityContainer btc
+                    && btc.Inventory != null && btc.Inventory.Count > 0)
+                {
+                    int n = btc.Inventory.Count;
+                    int bcols = Math.Max(1, (int)Math.Ceiling(Math.Sqrt(n)));
+                    var bblock = ba.GetBlock(p);
+                    var bstack = bblock != null && bblock.Id != 0 ? new ItemStack(bblock) : null;
+                    if (geomLogged.Add(bblock?.Code?.Path ?? "bakingtop"))
+                    {
+                        logger.Notification("[SymbioticInventories] Baking top '{0}': inv={1} -> grid {2}x{3}",
+                            bblock?.Code?.Path, n, bcols, (n + bcols - 1) / bcols);
+                    }
+                    found.Add((dx * dx + dy * dy + dz * dz, new AmbientShelf
+                    {
+                        Pos = p,
+                        Inventory = btc.Inventory,
+                        Rows = (n + bcols - 1) / bcols,
+                        Cols = bcols,
+                        ItemsPerSegment = 1,
+                        Facade = false,
+                        Label = bstack?.GetName() ?? "?",
+                        Icon = bstack
                     }));
                     continue;
                 }

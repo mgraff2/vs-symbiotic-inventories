@@ -383,32 +383,64 @@ namespace SymbioticInventories.Integration
         /// <summary>Forget queued cellar opens (call when the window closes).</summary>
         public void ClearPendingOpens() => pendingOpens.Clear();
 
-        /// <summary>
-        /// The nearest quern within working range, or null. Deliberately NOT a capture:
-        /// machines keep their own dialogs (the quern's window carries grind progress and
-        /// must keep appearing on a real right-click). The master window instead renders a
-        /// tiny side-station bound directly to this inventory - contents stay fresh via
-        /// ordinary block-entity sync, and slot clicks travel the same block-entity packet
-        /// envelope the quern's own dialog uses.
-        /// </summary>
-        public (BlockPos pos, IInventory inv)? FindNearbyQuern(int radius = 5)
+        /// <summary>A nearby machine's slot panel: which inventory slots to show in the
+        /// window's strip and which of them is take-only output.</summary>
+        public class MachineInfo
         {
+            public BlockPos Pos;
+            public IInventory Inv;
+
+            /// <summary>Inventory slot ids shown, in panel order.</summary>
+            public int[] Slots;
+
+            /// <summary>Absolute slot id that is OUTPUT-ONLY (deposit clicks swallowed,
+            /// down-arrow marker), or -1.</summary>
+            public int OutputSlot = -1;
+        }
+
+        /// <summary>
+        /// The nearest working machines (up to two): querns and the whole FIREPIT family -
+        /// which includes vanilla firepits and the Stone Bake Oven's controller and
+        /// cooking top, since they derive from BlockEntityFirepit. Deliberately NOT
+        /// captures: machines keep their own dialogs (progress bars, temperatures). The
+        /// master window renders tiny side-stations bound directly to these inventories -
+        /// they are BlockEntityOpenableContainers, so slot clicks travel the same
+        /// block-entity packet envelope their own dialogs use, with REAL slot semantics.
+        /// Firepit slot order (vanilla InventorySmelting): 0 fuel, 1 input, 2 output.
+        /// </summary>
+        public List<MachineInfo> FindNearbyMachines(int radius = 5)
+        {
+            var found = new List<(int d, MachineInfo m)>();
             var center = capi.World?.Player?.Entity?.Pos?.AsBlockPos;
-            if (center == null) return null;
+            if (center == null) return new List<MachineInfo>();
 
             var ba = capi.World.BlockAccessor;
-            (BlockPos, IInventory)? best = null;
-            int bestD = int.MaxValue;
             for (int dx = -radius; dx <= radius; dx++)
             for (int dy = -2; dy <= 2; dy++)
             for (int dz = -radius; dz <= radius; dz++)
             {
                 var p = center.AddCopy(dx, dy, dz);
-                if (!(ba.GetBlockEntity(p) is BlockEntityQuern q) || q.Inventory == null || q.Inventory.Count < 2) continue;
+                var be = ba.GetBlockEntity(p);
                 int d = dx * dx + dy * dy + dz * dz;
-                if (d < bestD) { bestD = d; best = (p, q.Inventory); }
+
+                if (be is BlockEntityQuern q && q.Inventory != null && q.Inventory.Count >= 2)
+                {
+                    found.Add((d, new MachineInfo { Pos = p, Inv = q.Inventory, Slots = new[] { 0, 1 }, OutputSlot = 1 }));
+                }
+                else if (be is BlockEntityFirepit f && f.Inventory != null && f.Inventory.Count >= 3)
+                {
+                    found.Add((d, new MachineInfo { Pos = p, Inv = f.Inventory, Slots = new[] { 0, 1, 2 }, OutputSlot = 2 }));
+                }
             }
-            return best;
+
+            found.Sort((a, b) => a.d.CompareTo(b.d));
+            var result = new List<MachineInfo>();
+            foreach (var (_, m) in found)
+            {
+                result.Add(m);
+                if (result.Count >= 2) break;   // the strip has room for two stations
+            }
+            return result;
         }
 
         /// <summary>

@@ -107,7 +107,7 @@ namespace SymbioticInventories
             // walk-by queue (containers past pick range open as the player nears them).
             // 500 ms is imperceptible and both services skip what is already open.
             bool lastCatalogOpen = false;
-            BlockPos lastQuernPos = null;
+            long lastMachineSig = 17;
             long lastShelfSig = 17;
             api.Event.RegisterGameTickListener(_ =>
             {
@@ -116,12 +116,13 @@ namespace SymbioticInventories
                     entityContainers.Discover();
                     capture.TickPendingOpens();
 
-                    // Quern side-station follows the player: recompose when the nearest
-                    // quern changes (walked into range, away, or to a different quern).
-                    var qp = capture.FindNearbyQuern()?.pos;
-                    if (!Equals(qp, lastQuernPos))
+                    // Machine side-stations follow the player: recompose when the set of
+                    // nearby machines (querns, firepit family) changes.
+                    long msig = 17;
+                    foreach (var m in capture.FindNearbyMachines()) msig = msig * 31 + m.Pos.GetHashCode();
+                    if (msig != lastMachineSig)
                     {
-                        lastQuernPos = qp;
+                        lastMachineSig = msig;
                         window.Refresh();
                     }
 

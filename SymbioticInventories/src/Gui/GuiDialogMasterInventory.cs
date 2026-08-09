@@ -806,6 +806,7 @@ namespace SymbioticInventories.Gui
         /// puts it above them. Above the cursor, too, so it never fights the item tooltip.
         /// </summary>
         private bool hoverRenderFailed;
+        private bool iconRenderFailed;
 
         /// <summary>Render nothing while suppressed - skips the composer entirely.</summary>
         public override void OnRenderGUI(float deltaTime)
@@ -818,7 +819,25 @@ namespace SymbioticInventories.Gui
         {
             if (Suppressed) return;
             base.OnFinalizeFrame(deltaTime);
-            if (!IsOpened() || hoverRenderFailed) return;
+            if (!IsOpened()) return;
+
+            // Row icons and the hover label have SEPARATE kill-switches: one bad icon draw
+            // used to disable the whole layer forever (real bug - a backpack icon threw on
+            // its first frame and took the sack markers and labels with it).
+            if (!iconRenderFailed)
+            {
+                try
+                {
+                    DrawRowIcons(deltaTime);
+                }
+                catch (Exception e)
+                {
+                    iconRenderFailed = true;
+                    capi.Logger.Warning("[SymbioticInventories] Row icons disabled after render error: {0}", e);
+                }
+            }
+
+            if (hoverRenderFailed) return;
 
             // The whole body is guarded: this is unverifiable render code (I cannot test the
             // GL path headlessly), and a throw in OnFinalizeFrame takes the ENTIRE client down
@@ -826,8 +845,6 @@ namespace SymbioticInventories.Gui
             // failure we log once and permanently disable the label, never the game.
             try
             {
-                DrawRowIcons(deltaTime);
-
                 var hovered = capi.World?.Player?.InventoryManager?.CurrentHoveredSlot;
                 InventorySection s = null;
                 if (hovered != null) slotToSection.TryGetValue(hovered, out s);
@@ -898,6 +915,25 @@ namespace SymbioticInventories.Gui
             bool RowVisible(double relY) =>
                 relY - scrollY >= -0.2 * cell && relY - scrollY + cell <= viewportH + 0.2 * cell;
 
+            // Item/entity rendering here expects the environment vanilla gives it: the GUI
+            // shader active (element PostRender runs inside it). After base.OnFinalizeFrame
+            // no shader is bound, and the very first icon draw threw and dark-switched the
+            // whole layer (real bug: no bag icons, no sack markers, no portrait). Bind it
+            // for the duration, exactly like the hover label does.
+            var guiShader = capi.Render.GetEngineShader(EnumShaderProgram.Gui);
+            guiShader.Use();
+            try
+            {
+                DrawRowIconsCore(deltaTime, g, cell, vx, vy, RowVisible);
+            }
+            finally
+            {
+                guiShader.Stop();
+            }
+        }
+
+        private void DrawRowIconsCore(float deltaTime, double g, double cell, double vx, double vy, System.Func<double, bool> RowVisible)
+        {
             foreach (var ribbon in plan.Ribbons)
             {
                 if (ribbon.Slices.Count == 0) continue;
@@ -938,17 +974,20 @@ namespace SymbioticInventories.Gui
                 }
                 else if (s.OnCellClick != null && s.Icon != null)
                 {
-                    // Shelf/sack marker IN THE GRID: the container block's own picture at
-                    // the top-left corner of its brick - so a facade cell reads exactly
-                    // like the thing you'd be looking at in person: the sack, with its
-                    // flour type and count inside it.
+                    // Shelf/sack marker IN THE GRID: the container block's own picture in
+                    // the blank gutter cell RIGHT of its brick (the layout reserves one
+                    // blank column between bricks - "it would fit great", user), so a sack
+                    // cell reads like the sack you'd be looking at in person: sack picture
+                    // beside the flour type and count.
                     double relY = first.Row * cell;
                     if (!RowVisible(relY)) continue;
+                    int markerCol = first.Col + first.Cols;
+                    if (markerCol >= plan.Cols) continue;   // brick flush with the edge
                     iconDrawSlot.Itemstack = s.Icon;
                     capi.Render.RenderItemstackToGui(iconDrawSlot,
-                        vx + (first.Col * cell + cell * 0.18) * g,
-                        vy + (relY - scrollY + cell * 0.20) * g,
-                        90, (float)(cell * 0.40 * g), ColorUtil.WhiteArgb, true, false, false);
+                        vx + (markerCol * cell + cell * 0.5) * g,
+                        vy + (relY - scrollY + cell * 0.5) * g,
+                        90, (float)(cell * 0.62 * g), ColorUtil.WhiteArgb, true, false, false);
                 }
             }
         }

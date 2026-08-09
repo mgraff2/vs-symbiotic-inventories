@@ -28,11 +28,18 @@ namespace SymbioticInventories.Integration
         public static EntityContainerService Entities;
         public static ICoreClientAPI Capi;
 
+        /// <summary>The vanilla inventory dialog instance (the creative catalog, in
+        /// creative). Captured here so the master window can read its live bounds and fit
+        /// itself into the space beside it.</summary>
+        public static GuiDialog VanillaInventoryDialog;
+
         public static bool Prefix(GuiDialog __instance, ref bool __result)
         {
+            if (__instance.ToggleKeyCombinationCode != "inventorydialog") return true;  // some other dialog
+            VanillaInventoryDialog = __instance;
+
             if (Config == null || Window == null) return true;              // not wired yet
             if (!Config.OpenOnInventoryKey) return true;                    // option off: vanilla as normal
-            if (__instance.ToggleKeyCombinationCode != "inventorydialog") return true;  // some other dialog
 
             Window.Toggle();
             if (Window.IsOpened()) Entities?.Discover();

@@ -90,6 +90,7 @@ namespace SymbioticInventories
             // mount an elk or walk up to a boat after opening it - and drain the cellar
             // walk-by queue (containers past pick range open as the player nears them).
             // 500 ms is imperceptible and both services skip what is already open.
+            bool lastCatalogOpen = false;
             api.Event.RegisterGameTickListener(_ =>
             {
                 if (window.IsOpened())
@@ -101,6 +102,15 @@ namespace SymbioticInventories
                 {
                     entityContainers.Reset();
                     capture.ClearPendingOpens();
+                }
+
+                // Creative co-op: refit the master window when the catalog appears or goes
+                // away, so the side-by-side pairing stays seamless without a manual toggle.
+                bool catalogOpen = InventoryKeyInterceptor.VanillaInventoryDialog?.IsOpened() ?? false;
+                if (catalogOpen != lastCatalogOpen)
+                {
+                    lastCatalogOpen = catalogOpen;
+                    window.Refresh();
                 }
             }, 500);
 

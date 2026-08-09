@@ -384,6 +384,28 @@ namespace SymbioticInventories.Gui
 
             bool docked = mode == LayoutMode.DockLeft;
 
+            // Creative co-op: E in creative opens the catalog AND this window. Rather than
+            // overlap it, read the catalog's LIVE bounds and fit this window into the wider
+            // free side of the screen beside it - the two act as one combined surface, and
+            // this recomposes whenever the catalog opens or closes (mod-system tick), so
+            // the fit is dynamic, not a guess.
+            bool coop = false, coopRight = false;
+            double coopAvailW = 0;
+            if (!docked
+                && capi.World?.Player?.WorldData?.CurrentGameMode == EnumGameMode.Creative)
+            {
+                var cat = Integration.InventoryKeyInterceptor.VanillaInventoryDialog;
+                var cb = cat?.SingleComposer?.Bounds;
+                if (cat != null && cat.IsOpened() && cb != null)
+                {
+                    double catX = cb.absX / scale, catW = cb.OuterWidth / scale;
+                    double leftSpace = catX, rightSpace = screenW - catX - catW;
+                    coopRight = rightSpace > leftSpace;
+                    coopAvailW = Math.Max(leftSpace, rightSpace) - Pad * 2 - 8;
+                    coop = coopAvailW >= 9 * LayoutMetrics.Cell;   // enough for a real grid
+                }
+            }
+
             // No legend rail: the vessel tiles carry the icons and badges, and hovering a cell
             // now names its container, so the rail was redundant chrome. Removing it shrinks
             // the whole window (user ask). contentX is just the dialog padding.
@@ -391,7 +413,9 @@ namespace SymbioticInventories.Gui
             double chromeH = 40 + FooterH + Pad * 3;
             double availW = docked
                 ? Math.Min(screenW * 0.28, 10 * LayoutMetrics.Cell)
-                : Math.Max(8 * LayoutMetrics.Cell, screenW * 0.86 - Pad * 2);
+                : coop
+                    ? coopAvailW
+                    : Math.Max(8 * LayoutMetrics.Cell, screenW * 0.86 - Pad * 2);
             // 0.86 leaves a margin around the window instead of running edge-to-edge. Slot
             // cells cannot be shrunk (the engine renders them at a fixed unscaledSlotSize *
             // GUI scale, with no per-grid override), so this margin - plus the player's GUI
@@ -509,7 +533,11 @@ namespace SymbioticInventories.Gui
             bgBounds.BothSizing = ElementSizing.FitToChildren;
 
             var dialogBounds = ElementStdBounds.AutosizedMainDialog
-                .WithAlignment(docked ? EnumDialogArea.LeftMiddle : EnumDialogArea.CenterMiddle);
+                .WithAlignment(docked ? EnumDialogArea.LeftMiddle
+                    : coop ? (coopRight ? EnumDialogArea.RightMiddle : EnumDialogArea.LeftMiddle)
+                    : EnumDialogArea.CenterMiddle);
+            // Butt up against the catalog's side with a whisker of breathing room.
+            if (coop) dialogBounds = dialogBounds.WithFixedAlignmentOffset(coopRight ? -4 : 4, 0);
 
             var composer = capi.Gui
                 .CreateCompo("symbioticinventories:master", dialogBounds)

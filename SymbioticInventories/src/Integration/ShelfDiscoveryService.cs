@@ -70,6 +70,51 @@ namespace SymbioticInventories.Integration
         private FieldInfo restrictionsField;
         private readonly Dictionary<string, ItemStack[]> ghostCache = new();
         private readonly HashSet<string> geomLogged = new();
+        private readonly HashSet<string> ghostMissLogged = new();
+
+        /// <summary>Restriction code lists read straight from FoodShelves' shipped config
+        /// assets (config/restrictions/**), keyed by filename stem. The client-side asset
+        /// manager loads these even though the mod applies them server-side - unlike the
+        /// runtime dictionary, which may be empty on the client.</summary>
+        private Dictionary<string, string[]> assetRestrictions;
+
+        private Dictionary<string, string[]> AssetRestrictions()
+        {
+            if (assetRestrictions != null) return assetRestrictions;
+            assetRestrictions = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                foreach (var asset in capi.Assets.GetMany("config/restrictions", "foodshelves"))
+                {
+                    try
+                    {
+                        var jo = Vintagestory.API.Datastructures.JsonObject.FromJson(asset.ToText());
+                        var arr = jo["CollectibleCodes"]?.AsArray();
+                        if (arr == null) continue;
+                        var codes = new List<string>();
+                        foreach (var c in arr)
+                        {
+                            var v = c.AsString();
+                            if (!string.IsNullOrEmpty(v)) codes.Add(v);
+                        }
+                        if (codes.Count == 0) continue;
+
+                        string stem = asset.Location.Path;
+                        int slash = stem.LastIndexOf('/');
+                        if (slash >= 0) stem = stem.Substring(slash + 1);
+                        stem = stem.Replace(".json", "");
+                        assetRestrictions[stem] = codes.ToArray();
+                    }
+                    catch { /* one bad file must not kill the rest */ }
+                }
+            }
+            catch (Exception e)
+            {
+                logger.Warning("[SymbioticInventories] Reading FoodShelves restriction assets failed: {0}", e.Message);
+            }
+            logger.Notification("[SymbioticInventories] Loaded {0} FoodShelves restriction file(s) for ghost hints.", assetRestrictions.Count);
+            return assetRestrictions;
+        }
 
         public void Start(ICoreClientAPI api, ILogger log)
         {
@@ -235,33 +280,48 @@ namespace SymbioticInventories.Integration
             ItemStack[] result = null;
             try
             {
+                // Runtime dictionary first (authoritative when populated), the mod's
+                // shipped config assets second (always available client-side).
+                string[] codes = null;
                 var dict = fsCore == null ? null : restrictionsField?.GetValue(fsCore) as System.Collections.IDictionary;
                 if (dict != null && dict.Contains(key))
                 {
                     var rd = dict[key];
-                    var codes = rd == null ? null
+                    codes = rd == null ? null
                         : AccessTools.Property(rd.GetType(), "CollectibleCodes")?.GetValue(rd) as string[];
-                    if (codes != null)
+                }
+                if (codes == null || codes.Length == 0)
+                {
+                    AssetRestrictions().TryGetValue(key, out codes);
+                }
+
+                if ((codes == null || codes.Length == 0) && ghostMissLogged.Add(key))
+                {
+                    logger.Notification(
+                        "[SymbioticInventories] No restriction codes for shelf key '{0}' (runtime entries: {1}, asset files: {2}).",
+                        key, dict?.Count ?? -1, AssetRestrictions().Count);
+                }
+
+                if (codes != null)
+                {
+                    var foundGhosts = new List<ItemStack>();
+                    foreach (var code in codes)
                     {
-                        var foundGhosts = new List<ItemStack>();
-                        foreach (var code in codes)
+                        if (foundGhosts.Count >= 2) break;
+                        var loc = new AssetLocation(code);
+                        var items = capi.World.SearchItems(loc);
+                        if (items != null && items.Length > 0)
                         {
-                            if (foundGhosts.Count >= 2) break;
-                            var loc = new AssetLocation(code);
-                            var items = capi.World.SearchItems(loc);
-                            if (items != null && items.Length > 0)
-                            {
-                                foundGhosts.Add(new ItemStack(items[0]));
-                                continue;
-                            }
-                            var blocks = capi.World.SearchBlocks(loc);
-                            if (blocks != null && blocks.Length > 0)
-                            {
-                                foundGhosts.Add(new ItemStack(blocks[0]));
-                            }
+                            foundGhosts.Add(new ItemStack(items[0]));
+                            continue;
                         }
-                        if (foundGhosts.Count > 0) result = foundGhosts.ToArray();
+                        var blocks = capi.World.SearchBlocks(loc);
+                        if (blocks != null && blocks.Length > 0)
+                        {
+                            foundGhosts.Add(new ItemStack(blocks[0]));
+                        }
                     }
+                    if (foundGhosts.Count > 0) result = foundGhosts.ToArray();
                 }
             }
             catch (Exception e)

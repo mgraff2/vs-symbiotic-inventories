@@ -58,11 +58,19 @@ namespace SymbioticInventories.Core
         private void AddShelves(List<InventorySection> sections, ref int badge)
         {
             if (shelves == null) return;
+            shelves.ClearFacades();
             foreach (var shelf in shelves.Discover())
             {
                 var sh = shelf;
                 int n = ++badge;
+
+                // Bulk containers show FACADE cells: one display-only cell per segment
+                // carrying the live total ("flour x188"); a click on cell c acts on that
+                // segment (its first inventory slot indexes the segment for the service).
+                var inv = sh.Facade ? shelves.BuildFacade(sh) : sh.Inventory;
                 int slots = sh.Cols > 0 ? sh.Rows * sh.Cols : sh.Inventory.Count;
+                int per = Math.Max(1, sh.ItemsPerSegment);
+
                 sections.Add(new InventorySection
                 {
                     Id = "shelf:" + sh.Pos,
@@ -70,13 +78,15 @@ namespace SymbioticInventories.Core
                     Kind = SectionKind.GroundContainer,
                     Number = n,
                     Accent = SectionPalette.ForNumber(n),
-                    Inventory = sh.Inventory,
-                    SlotIds = Enumerable.Range(0, Math.Min(slots, sh.Inventory.Count)).ToArray(),
+                    Inventory = inv,
+                    SlotIds = Enumerable.Range(0, Math.Min(slots, inv.Count)).ToArray(),
                     FixedColumns = sh.Cols,
                     Icon = sh.Icon,
                     GroupKey = "foodshelves",
                     SendPacket = _ => { },   // no packet route - cells are click-synthesized
-                    OnCellClick = slot => shelves.InteractCell(sh, slot)
+                    OnCellClick = sh.Facade
+                        ? c => shelves.InteractCell(sh, c * per)
+                        : slot => shelves.InteractCell(sh, slot)
                 });
             }
         }

@@ -24,6 +24,11 @@ namespace SymbioticInventories.Integration
         /// selection box a real right-click would hit.</summary>
         public int ItemsPerSegment;
 
+        /// <summary>Bulk container (ItemsPerSegment > 1, e.g. a flour sack): rendered as
+        /// ONE FACADE CELL per segment showing the live aggregate count, instead of its
+        /// raw slots. Rows/Cols then describe the segment grid.</summary>
+        public bool Facade;
+
         public string Label;
         public ItemStack Icon;
     }
@@ -58,6 +63,8 @@ namespace SymbioticInventories.Integration
         {
             capi = api;
             logger = log;
+            // Facade cells display live aggregates; keep them current as sacks fill/drain.
+            api.Event.RegisterGameTickListener(UpdateFacades, 250);
         }
 
         private Type BaseType()
@@ -110,12 +117,15 @@ namespace SymbioticInventories.Integration
                 int segs = (segsProp?.GetValue(be) as int?) ?? 1;
                 int perSeg = (perSegProp?.GetValue(be) as int?) ?? 1;
 
-                // The flattened X x Y only holds when the declared geometry matches the
-                // inventory exactly; bulk containers (a flour sack is 1x1xN) and anything
-                // with extra slots flow as ordinary ribbons instead.
-                int cols = segs * perSeg;
-                bool structured = shelves >= 1 && cols >= 1 && cols <= 12
-                               && shelves * cols == inv.Count;
+                // Bulk containers (many items per segment - flour sacks, baskets) become
+                // FACADE grids: one cell per segment carrying the live total, "a container
+                // with an internal grid of 1" (user ask). Per-item shelves keep their real
+                // X x Y slot grid when the declared geometry matches the inventory; only
+                // genuinely odd shapes fall back to a flowing ribbon.
+                bool geomOk = shelves >= 1 && segs >= 1 && perSeg >= 1
+                           && shelves * segs * perSeg == inv.Count;
+                bool facade = geomOk && perSeg > 1 && segs <= 12;
+                bool structured = geomOk && perSeg == 1 && segs <= 12;
 
                 var block = ba.GetBlock(p);
                 var stack = block != null && block.Id != 0 ? new ItemStack(block) : null;
@@ -124,9 +134,10 @@ namespace SymbioticInventories.Integration
                 {
                     Pos = p,
                     Inventory = inv,
-                    Rows = structured ? shelves : 0,
-                    Cols = structured ? cols : 0,
+                    Rows = facade || structured ? shelves : 0,
+                    Cols = facade ? segs : (structured ? segs : 0),
                     ItemsPerSegment = Math.Max(1, perSeg),
+                    Facade = facade,
                     Label = stack?.GetName() ?? "?",
                     Icon = stack
                 }));
@@ -155,6 +166,72 @@ namespace SymbioticInventories.Integration
                 sig = sig * 31 + sh.Inventory.Count;
             }
             return sig;
+        }
+
+        // ---- facade cells ---------------------------------------------------------
+        //
+        // A bulk container renders as one DISPLAY-ONLY cell per segment: a DummyInventory
+        // whose stack mirrors the segment's live total (icon + count, "flour x188"). The
+        // slot grid never mutates it - clicks are intercepted upstream and drive the pump
+        // - and a quarter-second tick keeps the numbers matching the real inventory.
+
+        private class FacadeBinding
+        {
+            public DummyInventory Dummy;
+            public IInventory Real;
+            public int PerSeg;
+        }
+
+        private readonly List<FacadeBinding> facades = new();
+
+        /// <summary>Sections rebuild on every compose; stale bindings go with them.</summary>
+        public void ClearFacades() => facades.Clear();
+
+        /// <summary>The display inventory for one bulk container: one cell per segment.</summary>
+        public IInventory BuildFacade(AmbientShelf sh)
+        {
+            var b = new FacadeBinding
+            {
+                Dummy = new DummyInventory(capi, Math.Max(1, sh.Rows * sh.Cols)),
+                Real = sh.Inventory,
+                PerSeg = Math.Max(1, sh.ItemsPerSegment)
+            };
+            facades.Add(b);
+            UpdateFacade(b);
+            return b.Dummy;
+        }
+
+        private void UpdateFacades(float dt)
+        {
+            foreach (var b in facades) UpdateFacade(b);
+        }
+
+        private static void UpdateFacade(FacadeBinding b)
+        {
+            for (int s = 0; s < b.Dummy.Count; s++)
+            {
+                int sum = 0;
+                ItemStack first = null;
+                for (int i = s * b.PerSeg; i < (s + 1) * b.PerSeg && i < b.Real.Count; i++)
+                {
+                    var st = b.Real[i]?.Itemstack;
+                    if (st == null) continue;
+                    sum += st.StackSize;
+                    first ??= st;
+                }
+
+                var slot = b.Dummy[s];
+                if (first == null)
+                {
+                    slot.Itemstack = null;
+                    continue;
+                }
+                if (slot.Itemstack == null || slot.Itemstack.Collectible != first.Collectible)
+                {
+                    slot.Itemstack = first.Clone();
+                }
+                slot.Itemstack.StackSize = sum;
+            }
         }
 
         // ---- bulk transfer pump ---------------------------------------------------
@@ -218,10 +295,20 @@ namespace SymbioticInventories.Integration
             if (!carrying)
             {
                 // Vessel-like takes: a plain click on a filled cell lifts one full stack's
-                // worth, shift drains the cell. Either way the items land in the BAGS -
-                // the interaction can only deliver to the inventory, never the cursor;
-                // that is the one visible seam a client-side mod cannot close.
-                var cellStack = slotIndex < shelf.Inventory.Count ? shelf.Inventory[slotIndex]?.Itemstack : null;
+                // worth, shift drains the cell. The take is aimed at an EMPTY hotbar slot
+                // as the working hand: if the mod's take delivers to the hand, the cleanup
+                // click lands the stack on the CURSOR - exactly a vessel pickup. If it
+                // delivers to the bags instead, the working hand just stays empty and the
+                // items are in the bags; either way nothing held is displaced.
+                var im2 = capi.World.Player.InventoryManager;
+                ItemStack cellStack = null;
+                int per = Math.Max(1, shelf.ItemsPerSegment);
+                int segStart = slotIndex / per * per;
+                for (int i = segStart; i < segStart + per && i < shelf.Inventory.Count; i++)
+                {
+                    cellStack = shelf.Inventory[i]?.Itemstack;
+                    if (cellStack != null) break;
+                }
                 if (cellStack == null) { Interact(shelf, slotIndex); return; }   // empty cell: native click
 
                 job = new TransferJob
@@ -231,6 +318,17 @@ namespace SymbioticInventories.Integration
                     Deposit = false,
                     TakeLimit = shift ? 0 : Math.Max(1, cellStack.Collectible?.MaxStackSize ?? 1)
                 };
+
+                var hb = im2.GetHotbarInventory();
+                for (int i = 0; i < 10 && i < hb.Count; i++)
+                {
+                    if (hb[i].Empty)
+                    {
+                        job.RestoreHotbarIndex = im2.ActiveHotbarSlotNumber;
+                        im2.ActiveHotbarSlotNumber = i;
+                        break;
+                    }
+                }
                 Pump(0);
                 return;
             }
@@ -391,7 +489,8 @@ namespace SymbioticInventories.Integration
         {
             var j = job;
             job = null;
-            if (j == null || !j.Deposit) return;
+            if (j == null) return;
+            if (!j.Deposit && j.RestoreHotbarIndex < 0) return;   // take with no working hand: nothing to clean
 
             int handIndex = capi.World.Player.InventoryManager.ActiveHotbarSlotNumber;
             capi.Event.RegisterCallback(_ =>

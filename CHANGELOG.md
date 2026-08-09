@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Row markers.** Each worn bag's own icon sits in a margin left of its line, and a tiny
+  live 3D portrait of your mount stands in the blank row above its saddlebag brick (only
+  when saddlebags are present - absent, the whole part folds away). The vessel row now
+  orders backpacks, then saddlebags, then clicked-open containers.
 - **Saddlebags live under your bags.** The mount's inventory joins the player's left block -
   worn bags, a blank row, then the saddlebags - instead of flowing with world containers.
   A blank row also separates the left block from containers continuing below it.

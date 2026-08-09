@@ -176,6 +176,7 @@ namespace SymbioticInventories.Core
                     Inventory = cap.Inventory,
                     SlotIds = Enumerable.Range(0, cap.Inventory.Count).ToArray(),
                     Icon = CapturedIcon(cap),
+                    PortraitEntity = cap.OwningEntity,
                     GroupKey = CapturedGroupKey(cap),
                     SendPacket = cap.SendPacket
                 });

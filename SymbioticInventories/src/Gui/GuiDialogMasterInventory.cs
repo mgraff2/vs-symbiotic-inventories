@@ -6,6 +6,7 @@ using SymbioticInventories.Core.Layout;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
+using Vintagestory.API.MathTools;
 
 namespace SymbioticInventories.Gui
 {
@@ -131,6 +132,16 @@ namespace SymbioticInventories.Gui
         /// <summary>Section whose whole ribbon glows because the cursor is on its vessel
         /// tile (tile -> cells direction). Its tile lights up too.</summary>
         private string glowRibbonId;
+
+        /// <summary>The flow viewport bounds, kept for frame-time screen-space math
+        /// (per-row bag icons, the mount portrait).</summary>
+        private ElementBounds flowViewport;
+
+        /// <summary>Width (unscaled GUI units) of the icon margin left of the flow.</summary>
+        private double iconMargin;
+
+        /// <summary>Reused for the frame-time icon draws (the stack overload is obsolete).</summary>
+        private readonly DummySlot iconDrawSlot = new();
 
         public GuiDialogMasterInventory(ICoreClientAPI capi, SectionRegistry registry) : base(capi)
         {
@@ -434,13 +445,21 @@ namespace SymbioticInventories.Gui
 
             var stripItems = new List<(bool isChip, InventorySection s, List<InventorySection> members, double w)>();
             {
+                // Vessel-row order mirrors the grid's own reading order: your bags, then
+                // the mount's bags, then the containers you clicked open (user ask).
+                var stripOrder = new List<InventorySection>();
+                stripOrder.AddRange(numberedSections.FindAll(s => s.Kind == SectionKind.Backpack));
+                stripOrder.AddRange(numberedSections.FindAll(s => s.Kind == SectionKind.Mount));
+                stripOrder.AddRange(numberedSections.FindAll(
+                    s => s.Kind != SectionKind.Backpack && s.Kind != SectionKind.Mount));
+
                 string lastGroup = null;
-                foreach (var s in numberedSections)
+                foreach (var s in stripOrder)
                 {
                     if (s.GroupKey != lastGroup)
                     {
                         lastGroup = s.GroupKey;
-                        var members = numberedSections.FindAll(m => m.GroupKey == s.GroupKey);
+                        var members = stripOrder.FindAll(m => m.GroupKey == s.GroupKey);
                         if (members.Count > 1) stripItems.Add((true, s, members, ChipW + 4));
                     }
                     stripItems.Add((false, s, null, IconTile + 4));
@@ -476,7 +495,13 @@ namespace SymbioticInventories.Gui
             scrollY = Math.Clamp(scrollY, 0, Math.Max(0, contentH - viewportH));
 
             contentX = railW;
-            double bodyW = contentX + flowW + (scrolls ? 20 : 0);
+
+            // Left margin for the per-row bag icons - only when the left block exists, so
+            // a pure-container window stays flush.
+            iconMargin = plan.Ribbons.Exists(r => UnifiedGrid.IsLeftBlock(r.Section.Kind))
+                ? LayoutMetrics.Cell * 0.8 : 0;
+
+            double bodyW = contentX + iconMargin + flowW + (scrolls ? 20 : 0);
             double bodyH = TitleH + stripH + Math.Max(viewportH, 60) + FooterH + Pad;
 
             var bgBounds = ElementBounds.Fixed(0, 0, bodyW, bodyH)
@@ -561,7 +586,8 @@ namespace SymbioticInventories.Gui
                 (ctx, surface, bounds) => DrawStripGlow(ctx), StripGlowKey);
 
             // ---- scrolling flow -------------------------------------------------
-            var viewport = ElementBounds.Fixed(contentX, scrollStart, flowW, Math.Max(viewportH, 1));
+            var viewport = ElementBounds.Fixed(contentX + iconMargin, scrollStart, flowW, Math.Max(viewportH, 1));
+            flowViewport = viewport;
 
             // Ribbon chrome is one dynamic custom draw (own element-sized surface, LOCAL
             // coordinates); grids inside BeginClip are children of the clip and use
@@ -591,7 +617,7 @@ namespace SymbioticInventories.Gui
 
             if (scrolls)
             {
-                var sb = ElementBounds.Fixed(contentX + flowW + 4, scrollStart, 16, viewportH);
+                var sb = ElementBounds.Fixed(contentX + iconMargin + flowW + 4, scrollStart, 16, viewportH);
                 composer.AddVerticalScrollbar(OnNewScrollbarValue, sb, ScrollKey);
             }
 
@@ -639,6 +665,8 @@ namespace SymbioticInventories.Gui
             // failure we log once and permanently disable the label, never the game.
             try
             {
+                DrawRowIcons(deltaTime);
+
                 var hovered = capi.World?.Player?.InventoryManager?.CurrentHoveredSlot;
                 InventorySection s = null;
                 if (hovered != null) slotToSection.TryGetValue(hovered, out s);
@@ -687,6 +715,66 @@ namespace SymbioticInventories.Gui
             {
                 hoverRenderFailed = true;
                 capi.Logger.Warning("[SymbioticInventories] Hover label disabled after render error: {0}", e);
+            }
+        }
+
+        /// <summary>
+        /// Row markers drawn with the engine's own renderers: each worn bag's itemstack in
+        /// the margin left of its line, and a live 3D portrait of the mount in the blank
+        /// row above its saddlebag brick (bag-icon fallback if the entity is gone). Runs
+        /// inside the guarded finalize-frame block - unverifiable GL, never worth a crash.
+        /// Rows scrolled out of the viewport draw nothing (the flow clips its grids; these
+        /// are raw draws, so they must clip themselves).
+        /// </summary>
+        private void DrawRowIcons(float deltaTime)
+        {
+            if (flowViewport == null || plan == null) return;
+
+            double g = RuntimeEnv.GUIScale;
+            double cell = LayoutMetrics.Cell;
+            double vx = flowViewport.renderX, vy = flowViewport.renderY;
+
+            bool RowVisible(double relY) =>
+                relY - scrollY >= -0.2 * cell && relY - scrollY + cell <= viewportH + 0.2 * cell;
+
+            foreach (var ribbon in plan.Ribbons)
+            {
+                if (ribbon.Slices.Count == 0) continue;
+                var s = ribbon.Section;
+                var first = ribbon.Slices[0];
+
+                if (s.Kind == SectionKind.Backpack && iconMargin > 0 && s.Icon != null)
+                {
+                    double relY = first.Row * cell;
+                    if (!RowVisible(relY)) continue;
+                    iconDrawSlot.Itemstack = s.Icon;
+                    capi.Render.RenderItemstackToGui(iconDrawSlot,
+                        vx - iconMargin * g * 0.5,
+                        vy + (relY - scrollY + cell * 0.5) * g,
+                        90, (float)(cell * 0.55 * g), ColorUtil.WhiteArgb, true, false, false);
+                }
+                else if (s.Kind == SectionKind.Mount && first.Row > 0)
+                {
+                    // The blank row above the brick - it exists whenever bags are worn
+                    // (first.Row > 0); with no bags there is no gap and no portrait.
+                    double relY = (first.Row - 1) * cell;
+                    if (!RowVisible(relY)) continue;
+                    double cx = vx + first.Cols * 0.5 * cell * g;
+                    double bottomY = vy + (relY - scrollY + cell * 0.92) * g;
+
+                    if (s.PortraitEntity != null && s.PortraitEntity.Alive)
+                    {
+                        capi.Render.RenderEntityToGui(deltaTime, s.PortraitEntity,
+                            cx, bottomY, 90, -0.4f, (float)(cell * 0.7 * g), ColorUtil.WhiteArgb);
+                    }
+                    else if (s.Icon != null)
+                    {
+                        iconDrawSlot.Itemstack = s.Icon;
+                        capi.Render.RenderItemstackToGui(iconDrawSlot,
+                            cx, vy + (relY - scrollY + cell * 0.5) * g,
+                            90, (float)(cell * 0.55 * g), ColorUtil.WhiteArgb, true, false, false);
+                    }
+                }
             }
         }
 

@@ -1,5 +1,6 @@
 using System;
 using Vintagestory.API.Common;
+using Vintagestory.API.Common.Entities;
 
 namespace SymbioticInventories.Core
 {
@@ -69,6 +70,12 @@ namespace SymbioticInventories.Core
         /// containers); the badge tile still renders.
         /// </summary>
         public ItemStack Icon;
+
+        /// <summary>
+        /// The living entity carrying this inventory (elk, boat), for the tiny in-window
+        /// portrait above its rows. Null for blocks and player inventories.
+        /// </summary>
+        public Entity PortraitEntity;
 
         /// <summary>
         /// Container-type key for group filtering: "backpack" for worn bags, the block

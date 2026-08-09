@@ -408,25 +408,37 @@ namespace SymbioticInventories.Integration
 
             InteractForged(shelf, slotIndex, ctrl: true, shift: false);
 
-            capi.Event.RegisterCallback(_ =>
+            // The interaction runs the mod's CLIENT prediction synchronously, so the slot
+            // the stack landed in is known right now - lift it to the cursor in the same
+            // breath. The lift packet rides the same ordered stream as the take, so the
+            // server performs take -> lift back-to-back and the stack never visibly rests
+            // in the belt (the earlier 350ms settle showed exactly that layover - user).
+            // If prediction didn't place it (unusual), one delayed retry catches it.
+            bool LiftLanded()
             {
-                try
+                if (!im.MouseItemSlot.Empty) return true;   // cursor busy: leave it in the belt
+                for (int i = 0; i < hotbar.Count && i < before.Length; i++)
                 {
-                    if (!im.MouseItemSlot.Empty) return;
-                    for (int i = 0; i < hotbar.Count && i < before.Length; i++)
+                    if (hotbar[i].StackSize > before[i])
                     {
-                        if (hotbar[i].StackSize > before[i])
-                        {
-                            ClickSlot(hotbar, i);   // the landed stack -> cursor
-                            return;
-                        }
+                        ClickSlot(hotbar, i);   // the landed stack -> cursor
+                        return true;
                     }
                 }
-                catch (Exception e)
+                return false;
+            }
+
+            if (!LiftLanded())
+            {
+                capi.Event.RegisterCallback(_ =>
                 {
-                    logger.Warning("[SymbioticInventories] Take-to-cursor lift failed: {0}", e.Message);
-                }
-            }, 350);
+                    try { LiftLanded(); }
+                    catch (Exception e)
+                    {
+                        logger.Warning("[SymbioticInventories] Take-to-cursor lift failed: {0}", e.Message);
+                    }
+                }, 300);
+            }
         }
 
         /// <summary>An ordinary slot click with the mouse-cursor slot - the exact packets a

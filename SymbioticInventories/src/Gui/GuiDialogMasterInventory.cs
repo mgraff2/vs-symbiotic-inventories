@@ -521,6 +521,11 @@ namespace SymbioticInventories.Gui
             plan = UnifiedGrid.Compute(flowSections, cols);
             double flowW = plan.Cols * LayoutMetrics.Cell;
 
+            // Left margin for the per-row container icons - only when the left block
+            // exists, so a pure-container window stays flush.
+            iconMargin = plan.Ribbons.Exists(r => UnifiedGrid.IsLeftBlock(r.Section.Kind))
+                ? LayoutMetrics.Cell * 0.8 : 0;
+
             // Quern side-station discovery: reserve its corner of the strip before the
             // vessel tiles compute their wrap width, so the tiles never collide with it.
             var quern = Capture?.FindNearbyQuern();
@@ -528,10 +533,14 @@ namespace SymbioticInventories.Gui
             quernInv = quern?.inv;
             double quernW = quernInv != null ? IconTile + 6 + 2 * LayoutMetrics.Cell + 8 : 0;
 
-            // Vessel row: group chips + tiles, wrapping within the grid width beside crafting
-            // and bags. ALL numbered sections get a tile - hidden ones render dimmed. Each
-            // group (chests / vessels / backpacks) is prefixed by a narrow toggle chip.
-            double iconAreaW = Math.Max(IconTile + ChipW, flowW - iconAreaX - quernW);
+            // Vessel row: group chips + tiles, wrapping beside crafting and bags. ALL
+            // numbered sections get a tile - hidden ones render dimmed. Never let the
+            // tiles wrap into a skinny tall column: when the grid is narrow (mounted or
+            // solo) the strip keeps a sane minimum row width and the WINDOW widens to fit
+            // it - a short wide strip beats a tall blank top (real report: the mounted
+            // window was a long vertical with empty space up top).
+            double iconAreaW = Math.Max(6 * (IconTile + 4) + ChipW,
+                iconMargin + flowW - iconAreaX - quernW);
 
             var stripItems = new List<(bool isChip, InventorySection s, List<InventorySection> members, double w)>();
             {
@@ -586,12 +595,10 @@ namespace SymbioticInventories.Gui
 
             contentX = railW;
 
-            // Left margin for the per-row bag icons - only when the left block exists, so
-            // a pure-container window stays flush.
-            iconMargin = plan.Ribbons.Exists(r => UnifiedGrid.IsLeftBlock(r.Section.Kind))
-                ? LayoutMetrics.Cell * 0.8 : 0;
-
-            double bodyW = contentX + iconMargin + flowW + (scrolls ? 20 : 0);
+            // The window is as wide as its widest occupant: the flow grid, or the strip
+            // (crafting + bags + tiles + quern) when the grid is the narrow one.
+            double stripRightW = Math.Max(iconMargin + flowW, iconAreaX + iconAreaW + quernW);
+            double bodyW = contentX + stripRightW + (scrolls ? 20 : 0);
             double bodyH = TitleH + stripH + Math.Max(viewportH, 60) + FooterH + Pad;
 
             var bgBounds = ElementBounds.Fixed(0, 0, bodyW, bodyH)
@@ -687,7 +694,7 @@ namespace SymbioticInventories.Gui
             // contents stay fresh through ordinary block-entity sync as it grinds.
             if (quernInv != null && quernPos != null)
             {
-                double qx = contentX + iconMargin + flowW - quernW + 8;
+                double qx = contentX + stripRightW - quernW + 8;
                 double qy = TitleH;
                 var qpos = quernPos.Copy();
 

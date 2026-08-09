@@ -83,11 +83,17 @@ namespace SymbioticInventories.Core
                     FixedColumns = sh.Cols,
                     Icon = sh.Icon,
                     GhostIcons = sh.GhostIcons,
-                    GroupKey = "foodshelves",
-                    SendPacket = _ => { },   // no packet route - cells are click-synthesized
-                    OnCellClick = sh.Facade
-                        ? c => shelves.InteractCell(sh, c * per)
-                        : slot => shelves.InteractCell(sh, slot)
+                    GroupKey = sh.GroupKey,
+                    // Barrels (RealSlots) route ordinary slot ops through the block-entity
+                    // envelope; everything else has no packet route and click-synthesizes.
+                    SendPacket = sh.RealSlots
+                        ? (Action<object>)(pkt => capi.Network.SendBlockEntityPacket(sh.Pos.X, sh.Pos.Y, sh.Pos.Z, pkt))
+                        : _ => { },
+                    OnCellClick = sh.RealSlots
+                        ? null
+                        : sh.Facade
+                            ? c => shelves.InteractCell(sh, c * per)
+                            : slot => shelves.InteractCell(sh, slot)
                 });
             }
         }

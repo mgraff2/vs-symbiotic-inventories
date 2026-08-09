@@ -893,10 +893,11 @@ namespace SymbioticInventories.Gui
                         msz = cellU * 0.72;
                         mx = (iconMargin - msz) / 2;
                     }
-                    else if (s.OnCellClick != null && firstSlice.Col >= 1)
+                    else if (s.FixedColumns > 0 && firstSlice.Col >= 1)
                     {
                         // The layout reserves the blank cell LEFT of every brick as its
-                        // marker cell (user rule: pictures sit left of their sections).
+                        // marker cell (user rule: pictures sit left of their sections) -
+                        // shelves, sacks, crates, ovens, and barrels alike.
                         msz = cellU * 0.8;
                         mx = iconMargin + (firstSlice.Col - 1) * cellU + (cellU - msz) / 2;
                     }

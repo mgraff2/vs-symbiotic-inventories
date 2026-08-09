@@ -36,6 +36,14 @@ namespace SymbioticInventories.Integration
         /// <summary>Representative items of what this shelf is ALLOWED to store (an egg
         /// for the egg shelf), up to two - drawn as ghost hints in its empty cells.</summary>
         public ItemStack[] GhostIcons;
+
+        /// <summary>The container handles inventory packets itself (barrels): its cells
+        /// are REAL slots routed through the block-entity envelope - no synthetic clicks,
+        /// no gesture rules, ordinary drag-and-drop.</summary>
+        public bool RealSlots;
+
+        /// <summary>Vessel-row grouping key for this container family.</summary>
+        public string GroupKey = "foodshelves";
     }
 
     /// <summary>
@@ -246,6 +254,32 @@ namespace SymbioticInventories.Integration
                 var be = ba.GetBlockEntity(p);
                 if (be == null) continue;
 
+                // VANILLA BARRELS: they handle their own inventory packets (their dialog's
+                // route), so - unlike shelves - their two cells are REAL slots: item and
+                // liquid, ordinary drag-and-drop through the block-entity envelope. One
+                // brick per barrel, a whole brewery wall fits the grid. SEALED barrels are
+                // skipped: they are busy curing and even vanilla locks their dialog.
+                if (be is BlockEntityBarrel barrel)
+                {
+                    if (barrel.Sealed || barrel.Inventory == null || barrel.Inventory.Count < 1) continue;
+                    var bblock2 = ba.GetBlock(p);
+                    var bstack2 = bblock2 != null && bblock2.Id != 0 ? new ItemStack(bblock2) : null;
+                    found.Add((dx * dx + dy * dy + dz * dz, new AmbientShelf
+                    {
+                        Pos = p,
+                        Inventory = barrel.Inventory,
+                        Rows = 1,
+                        Cols = barrel.Inventory.Count,
+                        ItemsPerSegment = 1,
+                        Facade = false,
+                        RealSlots = true,
+                        GroupKey = "barrel",
+                        Label = bstack2?.GetName() ?? "?",
+                        Icon = bstack2
+                    }));
+                    continue;
+                }
+
                 // VANILLA CRATES: the same species as the shelves - no dialog, put/take
                 // by right-click, one item type in bulk - so they present as a one-cell
                 // facade with the crate's live total (user ask). Native per-click
@@ -269,6 +303,7 @@ namespace SymbioticInventories.Integration
                         Cols = 1,
                         ItemsPerSegment = cinv.Count,   // the whole crate is one segment
                         Facade = true,
+                        GroupKey = "crate",
                         Label = cstack?.GetName() ?? "?",
                         Icon = cstack
                     }));
@@ -299,6 +334,7 @@ namespace SymbioticInventories.Integration
                         Cols = bcols,
                         ItemsPerSegment = 1,
                         Facade = false,
+                        GroupKey = "oven",
                         Label = bstack?.GetName() ?? "?",
                         Icon = bstack
                     }));

@@ -148,6 +148,11 @@ namespace SymbioticInventories.Gui
         private BlockPos quernPos;
         private IInventory quernInv;
 
+        /// <summary>The quern OUTPUT slot's bounds (deposit clicks are swallowed) and its
+        /// dialog-space position for the baked down-arrow marker.</summary>
+        private ElementBounds quernOutBounds;
+        private (double x, double y)? quernOutPos;
+
         public GuiDialogMasterInventory(ICoreClientAPI capi, SectionRegistry registry) : base(capi)
         {
             this.registry = registry;
@@ -284,6 +289,16 @@ namespace SymbioticInventories.Gui
             if (Suppressed) return;   // invisible under the Options panel: let it take the click
             if (IsOpened() && !args.Handled)
             {
+                // Quern OUTPUT is output-only: swallow any click that would deposit (the
+                // mouse is carrying a stack). Taking with an empty hand falls through to
+                // the slot grid as normal.
+                if (quernOutBounds != null && quernOutBounds.PointInside(args.X, args.Y)
+                    && capi.World.Player.InventoryManager.MouseItemSlot?.Empty == false)
+                {
+                    args.Handled = true;
+                    return;
+                }
+
                 // Group chips: hide the whole container type at once; if the whole group is
                 // already hidden, bring it all back.
                 foreach (var (_, _, _, bounds, _, members) in groupChips)
@@ -663,10 +678,23 @@ namespace SymbioticInventories.Gui
                         quernInv as InventoryBase, slot, false, "quern-icon");
                 }
 
-                var gridB = ElementStdBounds.SlotGrid(EnumDialogArea.None, qx + IconTile + 6, qy, 2, 1);
-                composer.AddItemSlotGrid(quernInv,
-                    p => capi.Network.SendBlockEntityPacket(qpos.X, qpos.Y, qpos.Z, p),
-                    2, new[] { 0, 1 }, gridB, "grid-quern");
+                Action<object> send = p => capi.Network.SendBlockEntityPacket(qpos.X, qpos.Y, qpos.Z, p);
+
+                var inB = ElementStdBounds.SlotGrid(EnumDialogArea.None, qx + IconTile + 6, qy, 1, 1);
+                composer.AddItemSlotGrid(quernInv, send, 1, new[] { 0 }, inB, "grid-quernin");
+
+                // Output as its OWN grid so it can be click-gated (no depositing) and
+                // marked with the baked down-arrow.
+                double outX = qx + IconTile + 6 + LayoutMetrics.Cell;
+                var outB = ElementStdBounds.SlotGrid(EnumDialogArea.None, outX, qy, 1, 1);
+                composer.AddItemSlotGrid(quernInv, send, 1, new[] { 1 }, outB, "grid-quernout");
+                quernOutBounds = outB;
+                quernOutPos = (outX, qy);
+            }
+            else
+            {
+                quernOutBounds = null;
+                quernOutPos = null;
             }
 
             // ---- scrolling flow -------------------------------------------------
@@ -951,6 +979,28 @@ namespace SymbioticInventories.Gui
         private void DrawStripChrome(Context ctx, ElementBounds bounds)
         {
             double g = RuntimeEnv.GUIScale;
+
+            // Down-arrow on the quern's OUTPUT slot: output-only, things fall out of it.
+            // Baked behind the item sprite - visible while the slot is empty, covered by
+            // the flour once there is something to take.
+            if (quernOutPos != null)
+            {
+                double cell = LayoutMetrics.Cell;
+                double cx = bounds.drawX + (quernOutPos.Value.x - contentX + cell / 2) * g;
+                double cy = bounds.drawY + (quernOutPos.Value.y + cell / 2) * g;
+                double s = 7 * g;   // arrow half-width
+
+                ctx.SetSourceRGBA(0.92, 0.90, 0.85, 0.55);
+                // stem
+                ctx.Rectangle(cx - s * 0.35, cy - s * 1.4, s * 0.7, s * 1.2);
+                ctx.Fill();
+                // head
+                ctx.MoveTo(cx - s, cy - s * 0.3);
+                ctx.LineTo(cx + s, cy - s * 0.3);
+                ctx.LineTo(cx, cy + s);
+                ctx.ClosePath();
+                ctx.Fill();
+            }
 
             // Group chips: neutral tab showing the member count; slashed when the whole
             // group is toggled off. Sits flush against its group's first tile.

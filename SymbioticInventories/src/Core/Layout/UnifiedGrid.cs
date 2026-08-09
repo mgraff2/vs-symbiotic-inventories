@@ -198,35 +198,39 @@ namespace SymbioticInventories.Core.Layout
                 int n = s.SlotCount;
                 int h = (n + w - 1) / w;
 
+                // Each brick reserves one blank MARKER CELL to its LEFT (user rule: the
+                // container's picture sits left of its section, like the bag margin), so
+                // a brick needs w+1 columns of room and starts one past the band cursor.
                 while (true)
                 {
                     if (bandRow < 0)
                     {
                         // Fresh band: the first row at/after the cursor whose span holds
-                        // the brick (skips blank separator rows and too-narrow side rows).
+                        // marker + brick (skips blank separator rows and narrow side rows).
                         int r = row + (col > Span(row).a ? 1 : 0);
-                        while (Span(r).b - Span(r).a < w) r++;
+                        while (Span(r).b - Span(r).a < w + 1) r++;
                         bandRow = r; bandCol = Span(r).a; bandH = 0;
                     }
-                    if (bandCol + w <= Span(bandRow).b) break;
+                    if (bandCol + 1 + w <= Span(bandRow).b) break;
                     // Band full: open the next one below it.
                     row = bandRow + bandH; col = Span(row).a; bandRow = -1;
                 }
 
-                var brickRibbon = new Ribbon { Section = s, StartCell = bandRow * cols + bandCol };
+                int brickCol = bandCol + 1;   // the cell at bandCol stays blank: the marker
+                var brickRibbon = new Ribbon { Section = s, StartCell = bandRow * cols + brickCol };
                 int full = n / w;
                 if (full > 0)
-                    brickRibbon.Slices.Add(new RibbonSlice { Row = bandRow, Col = bandCol, Cols = w, Rows = full, SlotOffset = 0 });
+                    brickRibbon.Slices.Add(new RibbonSlice { Row = bandRow, Col = brickCol, Cols = w, Rows = full, SlotOffset = 0 });
                 int tail = n - full * w;
                 if (tail > 0)
-                    brickRibbon.Slices.Add(new RibbonSlice { Row = bandRow + full, Col = bandCol, Cols = tail, Rows = 1, SlotOffset = full * w });
+                    brickRibbon.Slices.Add(new RibbonSlice { Row = bandRow + full, Col = brickCol, Cols = tail, Rows = 1, SlotOffset = full * w });
 
                 plan.Ribbons.Add(brickRibbon);
                 plan.TotalCells += n;
                 plan.Rows = Math.Max(plan.Rows, bandRow + h);
 
                 bandH = Math.Max(bandH, h);
-                bandCol += w + 1;   // one blank column between bricks
+                bandCol += 1 + w;
             }
 
             return plan;

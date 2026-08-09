@@ -85,6 +85,10 @@ namespace SymbioticInventories.Core
         /// </summary>
         public Action<int> OnCellClick;
 
+        /// <summary>What the section is ALLOWED to store (an egg for the egg shelf), up to
+        /// two representatives - ghost-hinted in its empty cells. Null: no hints.</summary>
+        public ItemStack[] GhostIcons;
+
         /// <summary>
         /// Container-type key for group filtering: "backpack" for worn bags, the block
         /// code's first path part for block containers ("chest", "trunk", "storagevessel"),

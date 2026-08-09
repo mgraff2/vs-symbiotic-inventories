@@ -763,6 +763,41 @@ namespace SymbioticInventories.Gui
                         "grid-" + s.Id + "-" + slice.SlotOffset);
                     scrollables.Add((b, relY));
                     if (s.OnCellClick != null) synthGrids.Add((b, slice, s));
+
+                    // Ghost hints on restricted shelves: each EMPTY cell shows what the
+                    // shelf accepts (an egg on the egg shelf); a two-kind shelf shows the
+                    // pair split diagonally across the cell. Placed at compose - the shelf
+                    // signature tick recomposes whenever a cell flips empty/filled.
+                    if (s.OnCellClick != null && s.GhostIcons is { Length: > 0 })
+                    {
+                        double cellU = LayoutMetrics.Cell;
+                        for (int ci = 0; ci < slice.Count; ci++)
+                        {
+                            int sid = ids[ci];
+                            if (sid >= s.Inventory.Count || !s.Inventory[sid].Empty) continue;
+                            double cellX = iconMargin + (slice.Col + ci % slice.Cols) * cellU;
+                            double cellY = relY + ci / slice.Cols * cellU;
+
+                            int gn = Math.Min(2, s.GhostIcons.Length);
+                            for (int gi = 0; gi < gn; gi++)
+                            {
+                                double gs = cellU * (gn == 1 ? 0.5 : 0.36);
+                                double gx = gn == 1
+                                    ? cellX + (cellU - gs) / 2
+                                    : cellX + (gi == 0 ? 5 : cellU - gs - 5);
+                                double gy = cellY + (gn == 1
+                                    ? (cellU - gs) / 2
+                                    : (gi == 0 ? 5 : cellU - gs - 5));
+
+                                var gb = ElementBounds.Fixed(gx, gy - scrollY, gs, gs);
+                                var gslot = new DummySlot(s.GhostIcons[gi]);
+                                iconSlots.Add(gslot);
+                                composer.AddPassiveItemSlot(gb, s.Inventory as InventoryBase, gslot, false,
+                                    "ghost-" + s.Id + "-" + sid + "-" + gi);
+                                scrollables.Add((gb, gy));
+                            }
+                        }
+                    }
                 }
 
                 // Container markers, drawn by the PASSIVE ITEM SLOT element - the vessel

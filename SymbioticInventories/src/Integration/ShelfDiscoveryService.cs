@@ -31,6 +31,10 @@ namespace SymbioticInventories.Integration
 
         public string Label;
         public ItemStack Icon;
+
+        /// <summary>Representative items of what this shelf is ALLOWED to store (an egg
+        /// for the egg shelf), up to two - drawn as ghost hints in its empty cells.</summary>
+        public ItemStack[] GhostIcons;
     }
 
     /// <summary>
@@ -57,7 +61,14 @@ namespace SymbioticInventories.Integration
         // FoodShelves is a SOFT dependency: resolved by name once, absent = feature off.
         private Type beBaseType;
         private bool probed;
-        private PropertyInfo invProp, shelfCountProp, segsProp, perSegProp;
+        private PropertyInfo invProp, shelfCountProp, segsProp, perSegProp, attrCheckProp;
+
+        // Restriction lookup for the ghost hints: BE.AttributeCheck is the key into the
+        // FoodShelves.Core mod system's restrictions dictionary; each entry's
+        // CollectibleCodes are wildcard patterns of what the shelf accepts.
+        private object fsCore;
+        private FieldInfo restrictionsField;
+        private readonly Dictionary<string, ItemStack[]> ghostCache = new();
 
         public void Start(ICoreClientAPI api, ILogger log)
         {
@@ -83,6 +94,11 @@ namespace SymbioticInventories.Integration
             shelfCountProp = AccessTools.Property(beBaseType, "ShelfCount");
             segsProp = AccessTools.Property(beBaseType, "SegmentsPerShelf");
             perSegProp = AccessTools.Property(beBaseType, "ItemsPerSegment");
+            attrCheckProp = AccessTools.Property(beBaseType, "AttributeCheck");
+
+            var coreType = AccessTools.TypeByName("FoodShelves.Core");
+            restrictionsField = coreType == null ? null : AccessTools.Field(coreType, "restrictions");
+            fsCore = coreType == null ? null : capi.ModLoader.GetModSystem(coreType.FullName);
             if (invProp == null)
             {
                 logger.Warning("[SymbioticInventories] FoodShelves found but its Inventory member moved - shelf integration off.");
@@ -139,7 +155,8 @@ namespace SymbioticInventories.Integration
                     ItemsPerSegment = Math.Max(1, perSeg),
                     Facade = facade,
                     Label = stack?.GetName() ?? "?",
-                    Icon = stack
+                    Icon = stack,
+                    GhostIcons = GhostsFor(attrCheckProp?.GetValue(be) as string)
                 }));
             }
 
@@ -155,8 +172,9 @@ namespace SymbioticInventories.Integration
             return found.ConvertAll(f => f.shelf);
         }
 
-        /// <summary>Cheap change signature for the tick watcher: recompose only when the
-        /// set of nearby shelves (or their slot counts) actually changes.</summary>
+        /// <summary>Cheap change signature for the tick watcher: recompose when the set of
+        /// nearby shelves changes OR any cell flips between empty and filled (the ghost
+        /// hints live in empty cells and are placed at compose time).</summary>
         public long Signature()
         {
             long sig = 17;
@@ -164,8 +182,65 @@ namespace SymbioticInventories.Integration
             {
                 sig = sig * 31 + sh.Pos.GetHashCode();
                 sig = sig * 31 + sh.Inventory.Count;
+                foreach (var slot in sh.Inventory)
+                {
+                    sig = sig * 2 + ((slot?.Empty ?? true) ? 0 : 1);
+                }
             }
             return sig;
+        }
+
+        /// <summary>
+        /// Up to two representative items of what a shelf accepts: BE.AttributeCheck keys
+        /// the FoodShelves restrictions dictionary, whose CollectibleCodes are wildcard
+        /// patterns ("*:flour-*"); the first live item matching each pattern stands in.
+        /// One representative per pattern - a two-pattern shelf shows a split pair.
+        /// Cached per key; every step guarded (absent = simply no ghost hints).
+        /// </summary>
+        private ItemStack[] GhostsFor(string key)
+        {
+            if (key == null || key.Length == 0) return null;
+            if (ghostCache.TryGetValue(key, out var cached)) return cached;
+
+            ItemStack[] result = null;
+            try
+            {
+                var dict = fsCore == null ? null : restrictionsField?.GetValue(fsCore) as System.Collections.IDictionary;
+                if (dict != null && dict.Contains(key))
+                {
+                    var rd = dict[key];
+                    var codes = rd == null ? null
+                        : AccessTools.Property(rd.GetType(), "CollectibleCodes")?.GetValue(rd) as string[];
+                    if (codes != null)
+                    {
+                        var foundGhosts = new List<ItemStack>();
+                        foreach (var code in codes)
+                        {
+                            if (foundGhosts.Count >= 2) break;
+                            var loc = new AssetLocation(code);
+                            var items = capi.World.SearchItems(loc);
+                            if (items != null && items.Length > 0)
+                            {
+                                foundGhosts.Add(new ItemStack(items[0]));
+                                continue;
+                            }
+                            var blocks = capi.World.SearchBlocks(loc);
+                            if (blocks != null && blocks.Length > 0)
+                            {
+                                foundGhosts.Add(new ItemStack(blocks[0]));
+                            }
+                        }
+                        if (foundGhosts.Count > 0) result = foundGhosts.ToArray();
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                logger.Warning("[SymbioticInventories] Ghost hint lookup for '{0}' failed: {1}", key, e.Message);
+            }
+
+            ghostCache[key] = result;
+            return result;
         }
 
         // ---- facade cells ---------------------------------------------------------

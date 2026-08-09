@@ -82,6 +82,7 @@ namespace SymbioticInventories.Core
                     SlotIds = Enumerable.Range(0, Math.Min(slots, inv.Count)).ToArray(),
                     FixedColumns = sh.Cols,
                     Icon = sh.Icon,
+                    GhostIcons = sh.GhostIcons,
                     GroupKey = "foodshelves",
                     SendPacket = _ => { },   // no packet route - cells are click-synthesized
                     OnCellClick = sh.Facade

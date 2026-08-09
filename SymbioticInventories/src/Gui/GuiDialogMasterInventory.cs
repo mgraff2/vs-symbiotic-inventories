@@ -936,6 +936,20 @@ namespace SymbioticInventories.Gui
                             90, (float)(cell * 0.55 * g), ColorUtil.WhiteArgb, true, false, false);
                     }
                 }
+                else if (s.OnCellClick != null && s.Icon != null)
+                {
+                    // Shelf/sack marker IN THE GRID: the container block's own picture at
+                    // the top-left corner of its brick - so a facade cell reads exactly
+                    // like the thing you'd be looking at in person: the sack, with its
+                    // flour type and count inside it.
+                    double relY = first.Row * cell;
+                    if (!RowVisible(relY)) continue;
+                    iconDrawSlot.Itemstack = s.Icon;
+                    capi.Render.RenderItemstackToGui(iconDrawSlot,
+                        vx + (first.Col * cell + cell * 0.18) * g,
+                        vy + (relY - scrollY + cell * 0.20) * g,
+                        90, (float)(cell * 0.40 * g), ColorUtil.WhiteArgb, true, false, false);
+                }
             }
         }
 

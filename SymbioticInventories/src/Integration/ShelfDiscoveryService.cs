@@ -296,16 +296,9 @@ namespace SymbioticInventories.Integration
             var player = capi.World.Player;
             if (player.Entity.MountedOn != null)
             {
-                // While mounted the game routes ALL control-key state - physical keys and
-                // forged packets alike - to the MOUNT's controls, but the shelf mod reads
-                // the player's own. Whole-stack gestures cannot reach it from the saddle
-                // (the native CTRL+SHIFT combo fails identically). Degrade to a single
-                // item, but SAY SO - the silent version read as a broken mod (real report).
-                if (ctrl)
-                {
-                    capi.TriggerIngameError(this, "si-mounted",
-                        Vintagestory.API.Config.Lang.Get("symbioticinventories:mounted-bulk"));
-                }
+                // Unreachable via InteractCell (it refuses mounted clicks outright), kept
+                // as defense: control-key packets go to the mount's controls while riding,
+                // so a forged whole-stack flag could never reach the shelf mod anyway.
                 Interact(shelf, slotIndex);
                 return;
             }
@@ -347,6 +340,17 @@ namespace SymbioticInventories.Integration
         /// </summary>
         public void InteractCell(AmbientShelf shelf, int slotIndex)
         {
+            // From the saddle, shelf cells refuse outright (user decision): the server
+            // hardcodes control-key packets to the MOUNT's controls while riding, so the
+            // whole-stack signal can never reach the shelf mod - and a sack that dribbles
+            // single items reads as broken. Refuse with the reason instead.
+            if (capi.World.Player.Entity.MountedOn != null)
+            {
+                capi.TriggerIngameError(this, "si-mounted",
+                    Vintagestory.API.Config.Lang.Get("symbioticinventories:mounted-bulk"));
+                return;
+            }
+
             bool shiftClick = capi.Input.KeyboardKeyState[(int)GlKeys.LShift]
                            || capi.Input.KeyboardKeyState[(int)GlKeys.RShift];
             var im = capi.World.Player.InventoryManager;

@@ -30,5 +30,5 @@
   "opt-mount": "Show your mount's inventory",
   "opt-mount-hint": "Elk saddlebags and pack-animal bags of the mount you are riding appear in the window automatically. Nearby boats open all their crates at once.",
   "opt-entity-radius": "Include mounts/boats within",
-  "mounted-bulk": "Dismount to move whole stacks - while riding, the game gives your modifier keys to the mount."
+  "mounted-bulk": "Dismount to use sacks and shelves - while riding, the game gives your modifier keys to the mount."
 }

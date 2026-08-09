@@ -44,6 +44,9 @@ namespace SymbioticInventories
             var shelves = new ShelfDiscoveryService();
             shelves.Start(api, Mod.Logger);
 
+            var stew = new StewService();
+            stew.Start(api, Mod.Logger);
+
             var registry = new SectionRegistry(api, capture, shelves);
             window = new GuiDialogMasterInventory(api, registry) { Config = config, Capture = capture };
             options = new GuiDialogOptions(api, config, () => api.StoreModConfig(config, ModConfig.Filename)) { MainWindow = window };
@@ -82,6 +85,7 @@ namespace SymbioticInventories
             {
                 if (!window.IsOpened()) window.TryOpen();
             };
+            window.Stew = stew;
 
             InventoryKeyInterceptor.Config = config;
             InventoryKeyInterceptor.Window = window;
@@ -109,6 +113,7 @@ namespace SymbioticInventories
             bool lastCatalogOpen = false;
             long lastMachineSig = 17;
             long lastShelfSig = 17;
+            long lastStewSig = 17;
             api.Event.RegisterGameTickListener(_ =>
             {
                 if (window.IsOpened())
@@ -131,6 +136,14 @@ namespace SymbioticInventories
                     if (sig != lastShelfSig)
                     {
                         lastShelfSig = sig;
+                        window.Refresh();
+                    }
+
+                    // Stew station: refresh when the pot's state meaningfully changes.
+                    long ssig = stew.Signature();
+                    if (ssig != lastStewSig)
+                    {
+                        lastStewSig = ssig;
                         window.Refresh();
                     }
                 }

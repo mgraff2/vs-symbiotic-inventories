@@ -153,6 +153,13 @@ namespace SymbioticInventories.Gui
         /// are swallowed, and each carries the down-arrow marker.</summary>
         private readonly List<ElementBounds> machineOutBounds = new();
 
+        /// <summary>The Eternal Stew service and the nearest pot's live readout; wired by
+        /// the mod system, null when the mod is absent or no pot is near.</summary>
+        public Integration.StewService Stew;
+        private Integration.StewInfo stewInfo;
+        private ElementBounds stewPanelBounds;
+        private const double StewTextW = 118;
+
         /// <summary>Slot grids belonging to synthetic-interaction sections (FoodShelves):
         /// clicks on them are swallowed and become real block interactions.</summary>
         private readonly List<(ElementBounds b, RibbonSlice slice, InventorySection s)> synthGrids = new();
@@ -293,6 +300,25 @@ namespace SymbioticInventories.Gui
             if (Suppressed) return;   // invisible under the Options panel: let it take the click
             if (IsOpened() && !args.Handled)
             {
+                // Stew station: clicks become the real hand interactions - click acts on
+                // the POT (food in hand adds it, a bowl serves), SHIFT-click feeds the
+                // STOVE with the held fuel. Same mounted rule as the shelves.
+                if (stewPanelBounds != null && stewPanelBounds.PointInside(args.X, args.Y) && stewInfo != null)
+                {
+                    args.Handled = true;
+                    if (capi.World.Player.Entity.MountedOn != null)
+                    {
+                        capi.TriggerIngameError(this, "si-mounted",
+                            Lang.Get("symbioticinventories:mounted-bulk"));
+                        return;
+                    }
+                    bool stewShift = capi.Input.KeyboardKeyState[(int)GlKeys.LShift]
+                                  || capi.Input.KeyboardKeyState[(int)GlKeys.RShift];
+                    if (stewShift && stewInfo.StovePos != null) Stew?.Interact(stewInfo.StovePos);
+                    else Stew?.Interact(stewInfo.PotPos);
+                    return;
+                }
+
                 // Machine OUTPUT slots are output-only: swallow any click that would
                 // deposit (the mouse is carrying a stack). Taking with an empty hand
                 // falls through to the slot grid as normal.
@@ -539,6 +565,13 @@ namespace SymbioticInventories.Gui
             double machinesW = 0;
             foreach (var m in machines) machinesW += IconTile + 6 + m.Slots.Length * LayoutMetrics.Cell + 8;
 
+            // The stew station shares the machines' corner of the strip.
+            stewInfo = Stew?.FindNearby();
+            double stewW = stewInfo != null
+                ? IconTile + 6 + StewTextW + 3 * (LayoutMetrics.Cell * 0.5 + 2) + 8
+                : 0;
+            machinesW += stewW;
+
             // Vessel row: group chips + tiles, wrapping beside crafting and bags. ALL
             // numbered sections get a tile - hidden ones render dimmed. Never let the
             // tiles wrap into a skinny tall column: when the grid is narrow (mounted or
@@ -734,6 +767,48 @@ namespace SymbioticInventories.Gui
                     }
 
                     mpx += m.Slots.Length * LayoutMetrics.Cell + 8;
+                }
+
+                // The STEW STATION: pot icon, live readout (name, servings, litres, heat,
+                // simmer, stove fuel), the actual pot contents as mini icons. The pot has
+                // no inventory - clicks synthesize the real hand interactions instead
+                // (handled in OnMouseDown against stewPanelBounds).
+                if (stewInfo != null)
+                {
+                    double sy = TitleH;
+                    stewPanelBounds = ElementBounds.Fixed(mpx - 4, sy, 4 + IconTile + 6 + StewTextW
+                        + 3 * (LayoutMetrics.Cell * 0.5 + 2), LayoutMetrics.Cell);
+                    composer.AddHoverText(Lang.Get("symbioticinventories:stew-hint"),
+                        CairoFont.WhiteSmallText().WithFontSize(14), 320, stewPanelBounds.FlatCopy());
+
+                    if (stewInfo.PotIcon != null)
+                    {
+                        var pslot = new DummySlot(stewInfo.PotIcon);
+                        iconSlots.Add(pslot);
+                        composer.AddPassiveItemSlot(
+                            ElementBounds.Fixed(mpx, sy + (LayoutMetrics.Cell - IconTile) / 2, IconTile, IconTile),
+                            null, pslot, false, "stew-icon");
+                    }
+                    mpx += IconTile + 6;
+
+                    var textB = ElementBounds.Fixed(mpx, sy, StewTextW, LayoutMetrics.Cell);
+                    composer.AddDynamicCustomDraw(textB, (ctx, surface, b) => DrawStewText(ctx), "stewtext");
+                    mpx += StewTextW;
+
+                    for (int si = 0; si < stewInfo.Contents.Count && si < 3; si++)
+                    {
+                        double ms = LayoutMetrics.Cell * 0.5;
+                        var cslot = new DummySlot(stewInfo.Contents[si]);
+                        iconSlots.Add(cslot);
+                        composer.AddPassiveItemSlot(
+                            ElementBounds.Fixed(mpx, sy + (LayoutMetrics.Cell - ms) / 2, ms, ms),
+                            null, cslot, false, "stew-content-" + si);
+                        mpx += ms + 2;
+                    }
+                }
+                else
+                {
+                    stewPanelBounds = null;
                 }
             }
 
@@ -1285,6 +1360,41 @@ namespace SymbioticInventories.Gui
                 GuiElement.RoundRectangle(ctx, x, y, t, t, 2 * g);
                 ctx.Stroke();
                 break;
+            }
+        }
+
+        /// <summary>The stew station's readout (dynamic draw, LOCAL coordinates): three
+        /// compact lines - name + servings, litres + heat, simmer/fuel state.</summary>
+        private void DrawStewText(Context ctx)
+        {
+            var s = stewInfo;
+            if (s == null) return;
+            double g = RuntimeEnv.GUIScale;
+
+            ctx.SelectFontFace(GuiStyle.StandardFontName, FontSlant.Normal, FontWeight.Normal);
+            ctx.SetFontSize(11 * g);
+            ctx.SetSourceRGBA(0.92, 0.90, 0.85, 0.95);
+
+            string l1 = (s.StewName ?? Lang.Get("symbioticinventories:stew-empty"))
+                + (s.Servings > 0 ? "  x" + s.Servings : "");
+            string l2 = s.Litres > 0
+                ? Lang.Get("symbioticinventories:stew-litres", s.Litres.ToString("0.#")) + (s.IsHot ? " ♨" : "")
+                : "";
+            string l3 = s.SimmerFrac >= 0
+                ? Lang.Get("symbioticinventories:stew-simmer", (int)(s.SimmerFrac * 100))
+                : (s.StovePos != null
+                    ? Lang.Get("symbioticinventories:stew-fuel", (int)(s.FuelSeconds / 60)) + (s.Burning ? " 🔥" : "")
+                    : "");
+
+            double ly = 13 * g;
+            foreach (var line in new[] { l1, l2, l3 })
+            {
+                if (!string.IsNullOrEmpty(line))
+                {
+                    ctx.MoveTo(2 * g, ly);
+                    ctx.ShowText(line);
+                }
+                ly += 14 * g;
             }
         }
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Hover glow, both directions.** Hovering a grid cell lights up its container's tile in
+  the vessel row; hovering a tile makes that container's whole ribbon glow.
 - **Backward-L layout.** Worn bags are a fixed block top-left - one bag per line, block width
   = your biggest bag - then a blank gutter column; open containers flow beside the block and
   wrap full-width below it. With nothing else open the window is just the bag block (4×8 for

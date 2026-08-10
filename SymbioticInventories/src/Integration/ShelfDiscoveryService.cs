@@ -49,6 +49,12 @@ namespace SymbioticInventories.Integration
 
         /// <summary>Vessel-row grouping key for this container family.</summary>
         public string GroupKey = "foodshelves";
+
+        /// <summary>Wildcard codes of what this container accepts, when known. Used to
+        /// read click INTENT: a held item that cannot go in is not a deposit attempt -
+        /// the click takes instead (real bug: a quern in the hand deadened sack clicks).
+        /// Null: unknown, assume anything fits.</summary>
+        public string[] AcceptedCodes;
     }
 
     /// <summary>
@@ -408,7 +414,8 @@ namespace SymbioticInventories.Integration
                     Facade = facade,
                     Label = stack?.GetName() ?? "?",
                     Icon = stack,
-                    GhostIcons = GhostsFor(attrCheckProp?.GetValue(be) as string)
+                    GhostIcons = GhostsFor(attrCheckProp?.GetValue(be) as string),
+                    AcceptedCodes = CodesFor(attrCheckProp?.GetValue(be) as string)
                 }));
             }
 
@@ -504,28 +511,7 @@ namespace SymbioticInventories.Integration
             ItemStack[] result = null;
             try
             {
-                // Runtime dictionary first (authoritative when populated), the mod's
-                // shipped config assets second (always available client-side).
-                string[] codes = null;
-                var dict = fsCore == null ? null : restrictionsField?.GetValue(fsCore) as System.Collections.IDictionary;
-                if (dict != null && dict.Contains(key))
-                {
-                    var rd = dict[key];
-                    codes = rd == null ? null
-                        : AccessTools.Property(rd.GetType(), "CollectibleCodes")?.GetValue(rd) as string[];
-                }
-                if (codes == null || codes.Length == 0)
-                {
-                    AssetRestrictions().TryGetValue(key, out codes);
-                }
-
-                if ((codes == null || codes.Length == 0) && ghostMissLogged.Add(key))
-                {
-                    logger.Notification(
-                        "[SymbioticInventories] No restriction codes for shelf key '{0}' (runtime entries: {1}, asset files: {2}).",
-                        key, dict?.Count ?? -1, AssetRestrictions().Count);
-                }
-
+                var codes = CodesFor(key);
                 if (codes != null)
                 {
                     var foundGhosts = new List<ItemStack>();
@@ -555,6 +541,63 @@ namespace SymbioticInventories.Integration
 
             ghostCache[key] = result;
             return result;
+        }
+
+        private readonly Dictionary<string, string[]> codesCache = new();
+
+        /// <summary>The wildcard codes a shelf accepts: runtime dictionary first
+        /// (authoritative when populated), the mod's shipped config assets second
+        /// (always available client-side). Cached per key; null when unknown.</summary>
+        private string[] CodesFor(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return null;
+            if (codesCache.TryGetValue(key, out var cached)) return cached;
+
+            string[] codes = null;
+            try
+            {
+                var dict = fsCore == null ? null : restrictionsField?.GetValue(fsCore) as System.Collections.IDictionary;
+                if (dict != null && dict.Contains(key))
+                {
+                    var rd = dict[key];
+                    codes = rd == null ? null
+                        : AccessTools.Property(rd.GetType(), "CollectibleCodes")?.GetValue(rd) as string[];
+                }
+                if (codes == null || codes.Length == 0)
+                {
+                    AssetRestrictions().TryGetValue(key, out codes);
+                }
+                if ((codes == null || codes.Length == 0) && ghostMissLogged.Add(key))
+                {
+                    logger.Notification(
+                        "[SymbioticInventories] No restriction codes for shelf key '{0}' (runtime entries: {1}, asset files: {2}).",
+                        key, dict?.Count ?? -1, AssetRestrictions().Count);
+                }
+            }
+            catch (Exception e)
+            {
+                logger.Warning("[SymbioticInventories] Restriction lookup for '{0}' failed: {1}", key, e.Message);
+            }
+            codesCache[key] = codes;
+            return codes;
+        }
+
+        /// <summary>Whether the stack could go in, per the container's accepted codes.
+        /// Unknown codes assume yes - native rules still decide server-side.</summary>
+        private static bool CouldGoIn(string[] patterns, ItemStack st)
+        {
+            if (patterns == null || patterns.Length == 0) return true;
+            var code = st?.Collectible?.Code;
+            if (code == null) return false;
+            foreach (var pat in patterns)
+            {
+                try
+                {
+                    if (Vintagestory.API.Util.WildcardUtil.Match(new AssetLocation(pat), code)) return true;
+                }
+                catch { /* malformed pattern: skip */ }
+            }
+            return false;
         }
 
         // ---- facade cells ---------------------------------------------------------
@@ -755,7 +798,10 @@ namespace SymbioticInventories.Integration
             }
 
             // Whole-stack pour straight from the active hand - the natural in-world flow.
-            if (!hand.Empty)
+            // ONLY when the held item could actually go in: a quern (or sword, or shovel)
+            // in the hand is not deposit intent, and treating it as one deadened the
+            // click entirely (real bug). Non-shelvable hand falls through to TAKE.
+            if (!hand.Empty && CouldGoIn(shelf.AcceptedCodes, hand.Itemstack))
             {
                 InteractForged(shelf, slotIndex, ctrl: true, shift: true);
                 return;
@@ -766,7 +812,7 @@ namespace SymbioticInventories.Integration
             // ONE forged pour, selection restored immediately (restoring a selection moves
             // no items). Leftover - sack full - returns to the cursor after the server
             // settles; with one op that is one small callback, not a state machine.
-            if (mouse != null && !mouse.Empty)
+            if (mouse != null && !mouse.Empty && CouldGoIn(shelf.AcceptedCodes, mouse.Itemstack))
             {
                 int empty = -1;
                 for (int i = 0; i < 10 && i < hotbar.Count; i++)

@@ -419,9 +419,17 @@ namespace SymbioticInventories.Integration
                 }));
             }
 
+            // Family first, then type, then distance: flour sacks sit together, each
+            // shelf type together, barrels together (user ask) - adjacent bricks in the
+            // grid and adjacent tiles in the vessel row. Distance only breaks ties within
+            // a type, and coordinates keep the order stable while standing still.
             found.Sort((a, b) =>
             {
-                int c = a.dist.CompareTo(b.dist);
+                int c = string.Compare(a.shelf.GroupKey, b.shelf.GroupKey, StringComparison.Ordinal);
+                if (c != 0) return c;
+                c = string.Compare(a.shelf.Label, b.shelf.Label, StringComparison.Ordinal);
+                if (c != 0) return c;
+                c = a.dist.CompareTo(b.dist);
                 if (c != 0) return c;
                 c = a.shelf.Pos.X.CompareTo(b.shelf.Pos.X);
                 if (c != 0) return c;

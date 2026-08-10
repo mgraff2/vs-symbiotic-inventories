@@ -427,15 +427,26 @@ namespace SymbioticInventories.Integration
                 {
                     found.Add((d, new MachineInfo { Pos = p, Inv = q.Inventory, Slots = new[] { 0, 1 }, OutputSlot = 1 }));
                 }
-                else if (be is BlockEntityFirepit f && f.Inventory != null && f.Inventory.Count >= 3)
+                else if (be is BlockEntityFirepit f && f.Inventory != null && f.Inventory.Count >= 1)
                 {
-                    // With a cooking container in the input, the firepit exposes its four
-                    // ingredient slots (user ask: "4 recipe inputs, 1 output, 1 pot-only
-                    // slot"): fuel, pot, in1-4, output. Bare firepit: fuel, input, output.
-                    int[] slots = f.Inventory is InventorySmelting sm && sm.HaveCookingContainer && f.Inventory.Count >= 7
-                        ? new[] { 0, 1, 3, 4, 5, 6, 2 }
-                        : new[] { 0, 1, 2 };
-                    found.Add((d, new MachineInfo { Pos = p, Inv = f.Inventory, Slots = slots, OutputSlot = 2 }));
+                    // The stone oven's HEAT SOURCE inherits the firepit's inventory but
+                    // only ever burns fuel - its input/output slots are dead weight (user
+                    // report: "should only have 1 slot, firewood only").
+                    if (be.GetType().Name == "BlockEntityOvenController")
+                    {
+                        found.Add((d, new MachineInfo { Pos = p, Inv = f.Inventory, Slots = new[] { 0 }, OutputSlot = -1 }));
+                    }
+                    else if (f.Inventory.Count >= 3)
+                    {
+                        // With a cooking container in the input, the firepit exposes its
+                        // four ingredient slots (user spec: "4 recipe inputs, 1 output,
+                        // 1 pot-only slot"): fuel, pot, in1-4, output. Bare firepit:
+                        // fuel, input, output.
+                        int[] slots = f.Inventory is InventorySmelting sm && sm.HaveCookingContainer && f.Inventory.Count >= 7
+                            ? new[] { 0, 1, 3, 4, 5, 6, 2 }
+                            : new[] { 0, 1, 2 };
+                        found.Add((d, new MachineInfo { Pos = p, Inv = f.Inventory, Slots = slots, OutputSlot = 2 }));
+                    }
                 }
             }
 

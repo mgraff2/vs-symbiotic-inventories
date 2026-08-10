@@ -468,14 +468,50 @@ namespace SymbioticInventories.Integration
                 var recipes = capi.ModLoader.GetModSystem<RecipeRegistrySystem>()?.BarrelRecipes;
                 if (recipes != null)
                 {
+                    // INPUTS, not products: collect every recipe OUTPUT first and keep it
+                    // out of the hints - a pickled vegetable is what comes OUT of the
+                    // barrel, the hint must show the fresh vegetable that goes in.
+                    var outputs = new HashSet<string>();
+                    foreach (var r in recipes)
+                    {
+                        var os = r?.Output?.ResolvedItemstack;
+                        if (os?.Collectible?.Code != null) outputs.Add(os.Collectible.Code.ToString());
+                    }
+
                     foreach (var r in recipes)
                     {
                         if (r?.Ingredients == null) continue;
                         foreach (var ing in r.Ingredients)
                         {
                             var st = ing?.ResolvedItemStack;
+                            if (st == null && ing?.Code != null)
+                            {
+                                // Wildcard ingredient ("any vegetable"): stand in the
+                                // first live match that is not itself a barrel output.
+                                foreach (var item in capi.World.SearchItems(ing.Code))
+                                {
+                                    if (item?.Code != null && !outputs.Contains(item.Code.ToString()))
+                                    {
+                                        st = new ItemStack(item);
+                                        break;
+                                    }
+                                }
+                                if (st == null)
+                                {
+                                    foreach (var bl in capi.World.SearchBlocks(ing.Code))
+                                    {
+                                        if (bl?.Code != null && !outputs.Contains(bl.Code.ToString()))
+                                        {
+                                            st = new ItemStack(bl);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
                             if (st?.Collectible?.Code == null) continue;
-                            if (!seen.Add(st.Collectible.Code.ToString())) continue;
+                            string codeStr = st.Collectible.Code.ToString();
+                            if (outputs.Contains(codeStr)) continue;   // products never hint
+                            if (!seen.Add(codeStr)) continue;
 
                             bool isLiquid = BlockLiquidContainerBase.GetContainableProps(st) != null;
                             var target = isLiquid ? liquids : items;

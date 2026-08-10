@@ -330,14 +330,30 @@ namespace SymbioticInventories.Integration
                     && btc.Inventory != null && btc.Inventory.Count > 0)
                 {
                     int n = btc.Inventory.Count;
+                    // InventoryOven allocates one internal slot beyond the bake spots -
+                    // the vanilla oven UI shows 4 of its 5. Show only the REAL spots
+                    // (real report: "I didn't understand the 5 surfaces").
+                    if (btc.Inventory is InventoryOven && n > 1) n -= 1;
+
                     int bcols = Math.Max(1, (int)Math.Ceiling(Math.Sqrt(n)));
                     var bblock = ba.GetBlock(p);
                     var bstack = bblock != null && bblock.Id != 0 ? new ItemStack(bblock) : null;
                     if (geomLogged.Add(bblock?.Code?.Path ?? "bakingtop"))
                     {
                         logger.Notification("[SymbioticInventories] Baking top '{0}': inv={1} -> grid {2}x{3}",
-                            bblock?.Code?.Path, n, bcols, (n + bcols - 1) / bcols);
+                            bblock?.Code?.Path, btc.Inventory.Count, bcols, (n + bcols - 1) / bcols);
                     }
+
+                    // Each bake spot cycles through the bakeables (doughs, pies) as its
+                    // washed-out ghost label - the spot says what belongs on it.
+                    ItemStack[][] cg = null;
+                    var bake = BakingCandidates();
+                    if (bake is { Length: > 0 })
+                    {
+                        cg = new ItemStack[n][];
+                        for (int bi = 0; bi < n; bi++) cg[bi] = bake;
+                    }
+
                     found.Add((dx * dx + dy * dy + dz * dz, new AmbientShelf
                     {
                         Pos = p,
@@ -348,7 +364,8 @@ namespace SymbioticInventories.Integration
                         Facade = false,
                         GroupKey = "oven",
                         Label = bstack?.GetName() ?? "?",
-                        Icon = bstack
+                        Icon = bstack,
+                        CellGhosts = cg
                     }));
                     continue;
                 }
@@ -455,6 +472,34 @@ namespace SymbioticInventories.Integration
                 }
             }
             return sig;
+        }
+
+        private ItemStack[] bakingCandidates;
+
+        /// <summary>What belongs on a baking surface: collectibles carrying the game's
+        /// bakingProperties attribute (doughs, unbaked pies), first eight, cached.</summary>
+        private ItemStack[] BakingCandidates()
+        {
+            if (bakingCandidates != null) return bakingCandidates;
+            var list = new List<ItemStack>();
+            try
+            {
+                foreach (var coll in capi.World.Collectibles)
+                {
+                    if (list.Count >= 8) break;
+                    var bp = coll?.Attributes?["bakingProperties"];
+                    if (bp == null || !bp.Exists) continue;
+                    var st = coll is Item it ? new ItemStack(it)
+                           : coll is Block bl ? new ItemStack(bl) : null;
+                    if (st != null) list.Add(st);
+                }
+            }
+            catch (Exception e)
+            {
+                logger.Warning("[SymbioticInventories] Baking candidate scan failed: {0}", e.Message);
+            }
+            bakingCandidates = list.ToArray();
+            return bakingCandidates;
         }
 
         private ItemStack[][] barrelGhosts;

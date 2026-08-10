@@ -143,9 +143,13 @@ namespace SymbioticInventories.Gui
         /// <summary>Reused for the frame-time icon draws (the stack overload is obsolete).</summary>
         private readonly DummySlot iconDrawSlot = new();
 
-        /// <summary>Cycling ghost hints (barrel cells flash through their candidates):
-        /// each entry's dummy slot rotates through its options on a shared clock.</summary>
-        private readonly List<(DummySlot slot, ItemStack[] options)> ghostCycles = new();
+        /// <summary>Ghost hints: full-cell dummy slots over empty cells, cycling through
+        /// their candidates on a shared clock, WASHED OUT at frame time so they read as
+        /// hints, never as contents (real contents render vivid, ghosts faded).</summary>
+        private readonly List<(DummySlot slot, ItemStack[] options, ElementBounds bounds)> ghostCycles = new();
+
+        /// <summary>Tiny white texture for the ghost wash overlay (tinted at draw).</summary>
+        private int ghostWashTex;
 
         /// <summary>Nearby machine side-stations (querns and the firepit family - vanilla
         /// firepits, the stone oven's controller and cooking top), refreshed each compose.
@@ -847,11 +851,13 @@ namespace SymbioticInventories.Gui
                     scrollables.Add((b, relY));
                     if (s.OnCellClick != null) synthGrids.Add((b, slice, s));
 
-                    // Ghost hints: each EMPTY cell shows what it accepts. Shelves show a
-                    // static hint (an egg on the egg shelf; a two-kind shelf splits the
-                    // pair diagonally); barrel cells CYCLE through their candidate lists
-                    // (flashing between salt, hides, water, brine... - user ask). Placed
-                    // at compose - the shelf signature recomposes on empty/filled flips.
+                    // Ghost hints: each EMPTY cell shows what it accepts, as a FULL-CELL
+                    // dummy slot aligned exactly over the real one (a half-size passive
+                    // slot never centred its item - real report). Multi-option cells
+                    // (barrels; two-kind shelves) cycle through their candidates; every
+                    // ghost is washed out at frame time so it reads as a hint, never as
+                    // contents. Placed at compose - the shelf signature recomposes on
+                    // empty/filled flips.
                     if (s.CellGhosts != null || (s.OnCellClick != null && s.GhostIcons is { Length: > 0 }))
                     {
                         double cellU = LayoutMetrics.Cell;
@@ -859,44 +865,21 @@ namespace SymbioticInventories.Gui
                         {
                             int sid = ids[ci];
                             if (sid >= s.Inventory.Count || !s.Inventory[sid].Empty) continue;
-                            double cellX = iconMargin + (slice.Col + ci % slice.Cols) * cellU;
-                            double cellY = relY + ci / slice.Cols * cellU;
 
                             var cycle = s.CellGhosts != null && sid < s.CellGhosts.Length
                                 ? s.CellGhosts[sid] : null;
-                            if (cycle is { Length: > 0 })
-                            {
-                                double gs = cellU * 0.5;
-                                var gb = ElementBounds.Fixed(cellX + (cellU - gs) / 2,
-                                    cellY + (cellU - gs) / 2 - scrollY, gs, gs);
-                                var gslot = new DummySlot(cycle[0]);
-                                iconSlots.Add(gslot);
-                                ghostCycles.Add((gslot, cycle));
-                                composer.AddPassiveItemSlot(gb, s.Inventory as InventoryBase, gslot, false,
-                                    "ghost-" + s.Id + "-" + sid);
-                                scrollables.Add((gb, cellY + (cellU - gs) / 2));
-                                continue;
-                            }
-                            if (s.GhostIcons is not { Length: > 0 }) continue;
+                            cycle ??= s.GhostIcons;
+                            if (cycle is not { Length: > 0 }) continue;
 
-                            int gn = Math.Min(2, s.GhostIcons.Length);
-                            for (int gi = 0; gi < gn; gi++)
-                            {
-                                double gs = cellU * (gn == 1 ? 0.5 : 0.36);
-                                double gx = gn == 1
-                                    ? cellX + (cellU - gs) / 2
-                                    : cellX + (gi == 0 ? 5 : cellU - gs - 5);
-                                double gy = cellY + (gn == 1
-                                    ? (cellU - gs) / 2
-                                    : (gi == 0 ? 5 : cellU - gs - 5));
-
-                                var gb = ElementBounds.Fixed(gx, gy - scrollY, gs, gs);
-                                var gslot = new DummySlot(s.GhostIcons[gi]);
-                                iconSlots.Add(gslot);
-                                composer.AddPassiveItemSlot(gb, s.Inventory as InventoryBase, gslot, false,
-                                    "ghost-" + s.Id + "-" + sid + "-" + gi);
-                                scrollables.Add((gb, gy));
-                            }
+                            double cellX = iconMargin + (slice.Col + ci % slice.Cols) * cellU;
+                            double cellY = relY + ci / slice.Cols * cellU;
+                            var gb = ElementBounds.Fixed(cellX, cellY - scrollY, cellU, cellU);
+                            var gslot = new DummySlot(cycle[0]);
+                            iconSlots.Add(gslot);
+                            ghostCycles.Add((gslot, cycle, gb));
+                            composer.AddPassiveItemSlot(gb, s.Inventory as InventoryBase, gslot, false,
+                                "ghost-" + s.Id + "-" + sid);
+                            scrollables.Add((gb, cellY));
                         }
                     }
                 }
@@ -1008,18 +991,6 @@ namespace SymbioticInventories.Gui
             {
                 try
                 {
-                    // Cycling ghosts rotate on a shared ~0.9s clock; the passive slots
-                    // render whatever their dummy slot holds each frame.
-                    if (ghostCycles.Count > 0)
-                    {
-                        int tick = (int)(capi.World.ElapsedMilliseconds / 900);
-                        foreach (var (gslot, options) in ghostCycles)
-                        {
-                            var want = options[tick % options.Length];
-                            if (!ReferenceEquals(gslot.Itemstack, want)) gslot.Itemstack = want;
-                        }
-                    }
-
                     DrawRowIcons(deltaTime);
                 }
                 catch (Exception e)
@@ -1126,6 +1097,42 @@ namespace SymbioticInventories.Gui
 
         private void DrawRowIconsCore(float deltaTime, double g, double cell, double vx, double vy, System.Func<double, bool> RowVisible)
         {
+            // Ghost hints: rotate the cycling cells on a shared ~0.9s clock, then WASH
+            // each ghost out with a translucent overlay - this stage draws over the item
+            // sprites (the hover label's proven mechanism), so the ghost's colours mute
+            // into an unmistakable "not really here" while real contents stay vivid.
+            if (ghostCycles.Count > 0)
+            {
+                if (ghostWashTex == 0)
+                {
+                    var surf = new ImageSurface(Format.Argb32, 2, 2);
+                    var wctx = new Context(surf);
+                    wctx.SetSourceRGBA(1, 1, 1, 1);
+                    wctx.Paint();
+                    wctx.Dispose();
+                    ghostWashTex = capi.Gui.LoadCairoTexture(surf, false);
+                    surf.Dispose();
+                }
+
+                int tick = (int)(capi.World.ElapsedMilliseconds / 900);
+                double vpTop = flowViewport.renderY;
+                double vpBot = vpTop + viewportH * g;
+                var wash = new Vec4f(0.45f, 0.43f, 0.38f, 0.55f);
+
+                foreach (var (gslot, options, gb) in ghostCycles)
+                {
+                    var want = options[tick % options.Length];
+                    if (!ReferenceEquals(gslot.Itemstack, want)) gslot.Itemstack = want;
+
+                    // Raw draw: must self-clip against the scrolling viewport.
+                    double top = gb.renderY;
+                    if (top < vpTop - 1 || top + gb.OuterHeight > vpBot + 1) continue;
+                    capi.Render.Render2DTexture(ghostWashTex,
+                        (float)gb.renderX, (float)top,
+                        (float)gb.OuterWidth, (float)gb.OuterHeight, 60, wash);
+                }
+            }
+
             // Only the LIVE PORTRAIT remains frame-time (an entity cannot be a passive
             // slot); every item marker moved to passive-slot elements in the compose -
             // the frame-time item renderer ran errorless yet never showed a pixel in play.
@@ -1153,6 +1160,11 @@ namespace SymbioticInventories.Gui
             base.Dispose();
             hoverTex?.Dispose();
             hoverTex = null;
+            if (ghostWashTex != 0)
+            {
+                capi.Render.GLDeleteTexture(ghostWashTex);
+                ghostWashTex = 0;
+            }
         }
 
         private void OnNewScrollbarValue(float value)

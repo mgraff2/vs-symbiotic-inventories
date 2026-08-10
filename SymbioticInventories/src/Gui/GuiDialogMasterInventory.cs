@@ -1115,17 +1115,19 @@ namespace SymbioticInventories.Gui
 
         private void DrawRowIconsCore(float deltaTime, double g, double cell, double vx, double vy, System.Func<double, bool> RowVisible)
         {
-            // Ghost hints: rotate the cycling cells on a shared ~0.9s clock, then WASH
-            // each ghost out with a translucent overlay - this stage draws over the item
-            // sprites (the hover label's proven mechanism), so the ghost's colours mute
-            // into an unmistakable "not really here" while real contents stay vivid.
+            // Ghost hints: rotate the cycling cells on a shared ~0.9s clock, then draw a
+            // WATERMARK VEIL over each ghost - a premultiplied gray, drawn with the exact
+            // primitive the hover label has proven on screen (the tinted-quad variant
+            // never showed - real report: "still in full color"). The gray is baked into
+            // the texture pixels, so the ghost's item art fades into a desaturated
+            // watermark while real contents stay vivid.
             if (ghostCycles.Count > 0)
             {
                 if (ghostWashTex == 0)
                 {
                     var surf = new ImageSurface(Format.Argb32, 2, 2);
                     var wctx = new Context(surf);
-                    wctx.SetSourceRGBA(1, 1, 1, 1);
+                    wctx.SetSourceRGBA(0.42, 0.41, 0.39, 0.72);   // cairo stores premultiplied
                     wctx.Paint();
                     wctx.Dispose();
                     ghostWashTex = capi.Gui.LoadCairoTexture(surf, false);
@@ -1135,19 +1137,19 @@ namespace SymbioticInventories.Gui
                 int tick = (int)(capi.World.ElapsedMilliseconds / 900);
                 double vpTop = flowViewport.renderY;
                 double vpBot = vpTop + viewportH * g;
-                var wash = new Vec4f(0.45f, 0.43f, 0.38f, 0.55f);
 
                 foreach (var (gslot, options, gb) in ghostCycles)
                 {
                     var want = options[tick % options.Length];
                     if (!ReferenceEquals(gslot.Itemstack, want)) gslot.Itemstack = want;
 
-                    // Raw draw: must self-clip against the scrolling viewport.
+                    // Raw draw: self-clip against the scrolling viewport (skip only when
+                    // fully outside, so partially visible cells still veil).
                     double top = gb.renderY;
-                    if (top < vpTop - 1 || top + gb.OuterHeight > vpBot + 1) continue;
-                    capi.Render.Render2DTexture(ghostWashTex,
+                    if (top + gb.OuterHeight < vpTop || top > vpBot) continue;
+                    capi.Render.Render2DTexturePremultipliedAlpha(ghostWashTex,
                         (float)gb.renderX, (float)top,
-                        (float)gb.OuterWidth, (float)gb.OuterHeight, 60, wash);
+                        (float)gb.OuterWidth, (float)gb.OuterHeight);
                 }
             }
 

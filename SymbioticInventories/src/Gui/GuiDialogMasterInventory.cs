@@ -143,6 +143,10 @@ namespace SymbioticInventories.Gui
         /// <summary>Reused for the frame-time icon draws (the stack overload is obsolete).</summary>
         private readonly DummySlot iconDrawSlot = new();
 
+        /// <summary>Cycling ghost hints (barrel cells flash through their candidates):
+        /// each entry's dummy slot rotates through its options on a shared clock.</summary>
+        private readonly List<(DummySlot slot, ItemStack[] options)> ghostCycles = new();
+
         /// <summary>Nearby machine side-stations (querns and the firepit family - vanilla
         /// firepits, the stone oven's controller and cooking top), refreshed each compose.
         /// Their fuel/input/output slots render top-right of the strip with REAL slot
@@ -449,6 +453,7 @@ namespace SymbioticInventories.Gui
             iconSlots.Clear();
             groupChips.Clear();
             synthGrids.Clear();
+            ghostCycles.Clear();
 
             double scale = Math.Max(0.1, RuntimeEnv.GUIScale);
             double screenW = capi.Render.FrameWidth / scale;
@@ -842,11 +847,12 @@ namespace SymbioticInventories.Gui
                     scrollables.Add((b, relY));
                     if (s.OnCellClick != null) synthGrids.Add((b, slice, s));
 
-                    // Ghost hints on restricted shelves: each EMPTY cell shows what the
-                    // shelf accepts (an egg on the egg shelf); a two-kind shelf shows the
-                    // pair split diagonally across the cell. Placed at compose - the shelf
-                    // signature tick recomposes whenever a cell flips empty/filled.
-                    if (s.OnCellClick != null && s.GhostIcons is { Length: > 0 })
+                    // Ghost hints: each EMPTY cell shows what it accepts. Shelves show a
+                    // static hint (an egg on the egg shelf; a two-kind shelf splits the
+                    // pair diagonally); barrel cells CYCLE through their candidate lists
+                    // (flashing between salt, hides, water, brine... - user ask). Placed
+                    // at compose - the shelf signature recomposes on empty/filled flips.
+                    if (s.CellGhosts != null || (s.OnCellClick != null && s.GhostIcons is { Length: > 0 }))
                     {
                         double cellU = LayoutMetrics.Cell;
                         for (int ci = 0; ci < slice.Count; ci++)
@@ -855,6 +861,23 @@ namespace SymbioticInventories.Gui
                             if (sid >= s.Inventory.Count || !s.Inventory[sid].Empty) continue;
                             double cellX = iconMargin + (slice.Col + ci % slice.Cols) * cellU;
                             double cellY = relY + ci / slice.Cols * cellU;
+
+                            var cycle = s.CellGhosts != null && sid < s.CellGhosts.Length
+                                ? s.CellGhosts[sid] : null;
+                            if (cycle is { Length: > 0 })
+                            {
+                                double gs = cellU * 0.5;
+                                var gb = ElementBounds.Fixed(cellX + (cellU - gs) / 2,
+                                    cellY + (cellU - gs) / 2 - scrollY, gs, gs);
+                                var gslot = new DummySlot(cycle[0]);
+                                iconSlots.Add(gslot);
+                                ghostCycles.Add((gslot, cycle));
+                                composer.AddPassiveItemSlot(gb, s.Inventory as InventoryBase, gslot, false,
+                                    "ghost-" + s.Id + "-" + sid);
+                                scrollables.Add((gb, cellY + (cellU - gs) / 2));
+                                continue;
+                            }
+                            if (s.GhostIcons is not { Length: > 0 }) continue;
 
                             int gn = Math.Min(2, s.GhostIcons.Length);
                             for (int gi = 0; gi < gn; gi++)
@@ -985,6 +1008,18 @@ namespace SymbioticInventories.Gui
             {
                 try
                 {
+                    // Cycling ghosts rotate on a shared ~0.9s clock; the passive slots
+                    // render whatever their dummy slot holds each frame.
+                    if (ghostCycles.Count > 0)
+                    {
+                        int tick = (int)(capi.World.ElapsedMilliseconds / 900);
+                        foreach (var (gslot, options) in ghostCycles)
+                        {
+                            var want = options[tick % options.Length];
+                            if (!ReferenceEquals(gslot.Itemstack, want)) gslot.Itemstack = want;
+                        }
+                    }
+
                     DrawRowIcons(deltaTime);
                 }
                 catch (Exception e)

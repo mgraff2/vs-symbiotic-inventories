@@ -89,6 +89,10 @@ namespace SymbioticInventories.Core
         /// two representatives - ghost-hinted in its empty cells. Null: no hints.</summary>
         public ItemStack[] GhostIcons;
 
+        /// <summary>Per-CELL ghost candidate lists (barrels: item candidates for cell 0,
+        /// liquids for cell 1); a cell's list CYCLES on screen. Overrides GhostIcons.</summary>
+        public ItemStack[][] CellGhosts;
+
         /// <summary>
         /// Container-type key for group filtering: "backpack" for worn bags, the block
         /// code's first path part for block containers ("chest", "trunk", "storagevessel"),

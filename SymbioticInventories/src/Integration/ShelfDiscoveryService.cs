@@ -42,6 +42,11 @@ namespace SymbioticInventories.Integration
         /// no gesture rules, ordinary drag-and-drop.</summary>
         public bool RealSlots;
 
+        /// <summary>Per-CELL ghost candidates (barrels: item-slot candidates for cell 0,
+        /// liquid candidates for cell 1). A cell's array CYCLES through its options -
+        /// the "flashing between liquids and salt" hint. Null: use GhostIcons.</summary>
+        public ItemStack[][] CellGhosts;
+
         /// <summary>Vessel-row grouping key for this container family.</summary>
         public string GroupKey = "foodshelves";
     }
@@ -275,7 +280,8 @@ namespace SymbioticInventories.Integration
                         RealSlots = true,
                         GroupKey = "barrel",
                         Label = bstack2?.GetName() ?? "?",
-                        Icon = bstack2
+                        Icon = bstack2,
+                        CellGhosts = BarrelGhosts()
                     }));
                     continue;
                 }
@@ -434,6 +440,53 @@ namespace SymbioticInventories.Integration
                 }
             }
             return sig;
+        }
+
+        private ItemStack[][] barrelGhosts;
+
+        /// <summary>
+        /// What can go in a barrel, read from the game's own BARREL RECIPE list (client-
+        /// synced): every recipe ingredient, split into liquids (water, brine, milk...)
+        /// for the liquid cell and solids (salt, hides, meat...) for the item cell -
+        /// distinct by code, capped at eight each. The cells cycle through their lists.
+        /// </summary>
+        private ItemStack[][] BarrelGhosts()
+        {
+            if (barrelGhosts != null) return barrelGhosts;
+            var items = new List<ItemStack>();
+            var liquids = new List<ItemStack>();
+            var seen = new HashSet<string>();
+            try
+            {
+                var recipes = capi.ModLoader.GetModSystem<RecipeRegistrySystem>()?.BarrelRecipes;
+                if (recipes != null)
+                {
+                    foreach (var r in recipes)
+                    {
+                        if (r?.Ingredients == null) continue;
+                        foreach (var ing in r.Ingredients)
+                        {
+                            var st = ing?.ResolvedItemStack;
+                            if (st?.Collectible?.Code == null) continue;
+                            if (!seen.Add(st.Collectible.Code.ToString())) continue;
+
+                            bool isLiquid = BlockLiquidContainerBase.GetContainableProps(st) != null;
+                            var target = isLiquid ? liquids : items;
+                            if (target.Count < 8) target.Add(st.Clone());
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                logger.Warning("[SymbioticInventories] Barrel recipe scan failed: {0}", e.Message);
+            }
+            barrelGhosts = new[]
+            {
+                items.Count > 0 ? items.ToArray() : null,
+                liquids.Count > 0 ? liquids.ToArray() : null
+            };
+            return barrelGhosts;
         }
 
         /// <summary>

@@ -83,6 +83,7 @@ namespace SymbioticInventories.Core
                     FixedColumns = sh.Cols,
                     Icon = sh.Icon,
                     GhostIcons = sh.GhostIcons,
+                    CellGhosts = sh.CellGhosts,
                     GroupKey = sh.GroupKey,
                     // Barrels (RealSlots) route ordinary slot ops through the block-entity
                     // envelope; everything else has no packet route and click-synthesizes.

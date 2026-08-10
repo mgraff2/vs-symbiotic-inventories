@@ -102,6 +102,28 @@ namespace SymbioticInventories
                 AccessTools.Method(typeof(GuiDialog), "OnGuiOpened"),
                 postfix: new HarmonyMethod(AccessTools.Method(typeof(InventoryKeyInterceptor), nameof(InventoryKeyInterceptor.OpenedPostfix))));
 
+            // Machine slots without machine dialogs: BEQuern/BEFirepit/BEBarrel's
+            // OnSlotModified refresh their own dialog's readout WITHOUT a null check -
+            // vanilla only ever modifies those slots while that dialog exists, but the
+            // machine stations and barrel bricks modify them with no dialog open, and the
+            // client died placing bones into the quern input (real crash). The finalizer
+            // swallows exactly the NullReferenceException on exactly these methods,
+            // client-side; the slot change is already applied and the server stays
+            // authoritative.
+            var nreFinalizer = new HarmonyMethod(AccessTools.Method(
+                typeof(SymbioticInventoriesModSystem), nameof(SuppressDialogRefreshNre)));
+            foreach (var typeName in new[]
+            {
+                "Vintagestory.GameContent.BlockEntityQuern",
+                "Vintagestory.GameContent.BlockEntityFirepit",
+                "Vintagestory.GameContent.BlockEntityBarrel"
+            })
+            {
+                var slotModified = AccessTools.Method(AccessTools.TypeByName(typeName), "OnSlotModified");
+                if (slotModified != null) harmony.Patch(slotModified, finalizer: nreFinalizer);
+                else Mod.Logger.Warning("[SymbioticInventories] {0}.OnSlotModified not found - its station slots may crash-refresh.", typeName);
+            }
+
             // Opening a chest has to bring the master window up, otherwise capturing it
             // would just make the container disappear with nowhere to show its contents.
             capture.OnCapturesChanged += OnCapturesChanged;
@@ -165,6 +187,11 @@ namespace SymbioticInventories
 
             Mod.Logger.Notification("[SymbioticInventories] Ready.");
         }
+
+        /// <summary>Harmony finalizer: suppress only the dialog-refresh NRE (see the
+        /// patch site above); every other exception propagates untouched.</summary>
+        public static System.Exception SuppressDialogRefreshNre(System.Exception __exception)
+            => __exception is System.NullReferenceException ? null : __exception;
 
         private void OnCapturesChanged()
         {

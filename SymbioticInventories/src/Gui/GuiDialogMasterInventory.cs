@@ -309,14 +309,15 @@ namespace SymbioticInventories.Gui
             try
             {
                 HandleMouseDown(args);
+                base.OnMouseDown(args);
             }
             catch (Exception e)
             {
-                // A throw here kills the whole client (it already did once, via an
-                // uncomposed bounds in a hit-test). A dead click is never worth a crash.
+                // A throw here kills the whole client (twice now: an uncomposed bounds in
+                // a hit-test, and a machine BE's dialog-refresh NRE bubbling through the
+                // slot grid). A dead click is never worth a crash.
                 capi.Logger.Warning("[SymbioticInventories] Click handling failed: {0}", e);
             }
-            base.OnMouseDown(args);
         }
 
         private void HandleMouseDown(MouseEvent args)

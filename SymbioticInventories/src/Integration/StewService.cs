@@ -132,7 +132,19 @@ namespace SymbioticInventories.Integration
                 if (stew != null)
                 {
                     var code = sdStewCode?.GetValue(stew) as string;
-                    info.StewName = string.IsNullOrEmpty(code) ? null : Vintagestory.API.Config.Lang.Get(code);
+                    if (!string.IsNullOrEmpty(code))
+                    {
+                        // The code is not always a lang key ("eternalstew.basic..." showed
+                        // raw); fall back to a prettified tail segment.
+                        var translated = Vintagestory.API.Config.Lang.GetIfExists(code);
+                        if (string.IsNullOrEmpty(translated) || translated == code)
+                        {
+                            int cut = code.LastIndexOfAny(new[] { ':', '.', '-' });
+                            var tail = cut >= 0 && cut < code.Length - 1 ? code.Substring(cut + 1) : code;
+                            translated = tail.Length > 0 ? char.ToUpper(tail[0]) + tail.Substring(1) : code;
+                        }
+                        info.StewName = translated;
+                    }
                     info.Servings = (sdServings?.GetValue(stew) as int?) ?? 0;
                     info.Litres = (sdLitres?.GetValue(stew) as float?) ?? 0f;
                     info.IsHot = (sdIsHot?.GetValue(stew) as bool?) ?? false;

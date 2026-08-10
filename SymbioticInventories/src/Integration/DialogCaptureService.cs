@@ -429,7 +429,13 @@ namespace SymbioticInventories.Integration
                 }
                 else if (be is BlockEntityFirepit f && f.Inventory != null && f.Inventory.Count >= 3)
                 {
-                    found.Add((d, new MachineInfo { Pos = p, Inv = f.Inventory, Slots = new[] { 0, 1, 2 }, OutputSlot = 2 }));
+                    // With a cooking container in the input, the firepit exposes its four
+                    // ingredient slots (user ask: "4 recipe inputs, 1 output, 1 pot-only
+                    // slot"): fuel, pot, in1-4, output. Bare firepit: fuel, input, output.
+                    int[] slots = f.Inventory is InventorySmelting sm && sm.HaveCookingContainer && f.Inventory.Count >= 7
+                        ? new[] { 0, 1, 3, 4, 5, 6, 2 }
+                        : new[] { 0, 1, 2 };
+                    found.Add((d, new MachineInfo { Pos = p, Inv = f.Inventory, Slots = slots, OutputSlot = 2 }));
                 }
             }
 

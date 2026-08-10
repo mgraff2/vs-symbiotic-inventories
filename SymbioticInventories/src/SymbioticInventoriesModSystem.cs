@@ -146,7 +146,11 @@ namespace SymbioticInventories
                     // Machine side-stations follow the player: recompose when the set of
                     // nearby machines (querns, firepit family) changes.
                     long msig = 17;
-                    foreach (var m in capture.FindNearbyMachines()) msig = msig * 31 + m.Pos.GetHashCode();
+                    foreach (var m in capture.FindNearbyMachines())
+                    {
+                        msig = msig * 31 + m.Pos.GetHashCode();
+                        msig = msig * 31 + m.Slots.Length;   // pot in/out changes the panel shape
+                    }
                     if (msig != lastMachineSig)
                     {
                         lastMachineSig = msig;

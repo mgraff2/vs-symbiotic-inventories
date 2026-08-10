@@ -143,13 +143,14 @@ namespace SymbioticInventories.Gui
         /// <summary>Reused for the frame-time icon draws (the stack overload is obsolete).</summary>
         private readonly DummySlot iconDrawSlot = new();
 
-        /// <summary>Ghost hints: full-cell dummy slots over empty cells, cycling through
-        /// their candidates on a shared clock, WASHED OUT at frame time so they read as
-        /// hints, never as contents (real contents render vivid, ghosts faded).</summary>
-        private readonly List<(DummySlot slot, ItemStack[] options, ElementBounds bounds)> ghostCycles = new();
+        /// <summary>Ghost hints: empty cells draw their candidate item GRAY at frame time
+        /// - a real watermark, not a full-colour item under a veil (three veil mechanisms
+        /// failed silently; tinting the item render itself cannot show full colour).
+        /// Coordinates are viewport-relative, unscaled; cycling on a shared clock.</summary>
+        private readonly List<(ItemStack[] options, double cellX, double cellY)> ghostCycles = new();
 
-        /// <summary>Tiny white texture for the ghost wash overlay (tinted at draw).</summary>
-        private int ghostWashTex;
+        /// <summary>One-time diagnostic so an invisible ghost layer names itself.</summary>
+        private bool ghostDrawLogged;
 
         /// <summary>Nearby machine side-stations (querns and the firepit family - vanilla
         /// firepits, the stone oven's controller and cooking top), refreshed each compose.
@@ -869,13 +870,11 @@ namespace SymbioticInventories.Gui
                     scrollables.Add((b, relY));
                     if (s.OnCellClick != null) synthGrids.Add((b, slice, s));
 
-                    // Ghost hints: each EMPTY cell shows what it accepts, as a FULL-CELL
-                    // dummy slot aligned exactly over the real one (a half-size passive
-                    // slot never centred its item - real report). Multi-option cells
-                    // (barrels; two-kind shelves) cycle through their candidates; every
-                    // ghost is washed out at frame time so it reads as a hint, never as
-                    // contents. Placed at compose - the shelf signature recomposes on
-                    // empty/filled flips.
+                    // Ghost hints: each EMPTY cell registers its candidates for the GRAY
+                    // frame-time watermark draw. No element here on purpose - a passive
+                    // slot renders its item full colour, which read as real contents
+                    // (three overlay veils failed silently; tinting the item render
+                    // itself cannot show full colour).
                     if (s.CellGhosts != null || (s.OnCellClick != null && s.GhostIcons is { Length: > 0 }))
                     {
                         double cellU = LayoutMetrics.Cell;
@@ -889,15 +888,9 @@ namespace SymbioticInventories.Gui
                             cycle ??= s.GhostIcons;
                             if (cycle is not { Length: > 0 }) continue;
 
-                            double cellX = iconMargin + (slice.Col + ci % slice.Cols) * cellU;
-                            double cellY = relY + ci / slice.Cols * cellU;
-                            var gb = ElementBounds.Fixed(cellX, cellY - scrollY, cellU, cellU);
-                            var gslot = new DummySlot(cycle[0]);
-                            iconSlots.Add(gslot);
-                            ghostCycles.Add((gslot, cycle, gb));
-                            composer.AddPassiveItemSlot(gb, s.Inventory as InventoryBase, gslot, false,
-                                "ghost-" + s.Id + "-" + sid);
-                            scrollables.Add((gb, cellY));
+                            ghostCycles.Add((cycle,
+                                iconMargin + (slice.Col + ci % slice.Cols) * cellU,
+                                relY + ci / slice.Cols * cellU));
                         }
                     }
                 }
@@ -1115,41 +1108,32 @@ namespace SymbioticInventories.Gui
 
         private void DrawRowIconsCore(float deltaTime, double g, double cell, double vx, double vy, System.Func<double, bool> RowVisible)
         {
-            // Ghost hints: rotate the cycling cells on a shared ~0.9s clock, then draw a
-            // WATERMARK VEIL over each ghost - a premultiplied gray, drawn with the exact
-            // primitive the hover label has proven on screen (the tinted-quad variant
-            // never showed - real report: "still in full color"). The gray is baked into
-            // the texture pixels, so the ghost's item art fades into a desaturated
-            // watermark while real contents stay vivid.
+            // Ghost hints: draw each empty cell's candidate item IN GRAY - the item
+            // renderer's own colour tint makes a true watermark; there is no full-colour
+            // element underneath any more. Cycles on a shared ~0.9s clock; gui shader is
+            // bound by the caller, matching the renderer's vanilla environment.
             if (ghostCycles.Count > 0)
             {
-                if (ghostWashTex == 0)
+                int tick = (int)(capi.World.ElapsedMilliseconds / 900);
+                int gray = ColorUtil.ColorFromRgba(135, 135, 135, 255);
+
+                foreach (var (options, cellX, cellY) in ghostCycles)
                 {
-                    var surf = new ImageSurface(Format.Argb32, 2, 2);
-                    var wctx = new Context(surf);
-                    wctx.SetSourceRGBA(0.42, 0.41, 0.39, 0.72);   // cairo stores premultiplied
-                    wctx.Paint();
-                    wctx.Dispose();
-                    ghostWashTex = capi.Gui.LoadCairoTexture(surf, false);
-                    surf.Dispose();
+                    if (!RowVisible(cellY)) continue;
+                    iconDrawSlot.Itemstack = options[tick % options.Length];
+                    capi.Render.RenderItemstackToGui(iconDrawSlot,
+                        vx + (cellX + cell * 0.5) * g,
+                        vy + (cellY - scrollY + cell * 0.5) * g,
+                        90, (float)(cell * 0.55 * g), gray, true, false, false);
                 }
 
-                int tick = (int)(capi.World.ElapsedMilliseconds / 900);
-                double vpTop = flowViewport.renderY;
-                double vpBot = vpTop + viewportH * g;
-
-                foreach (var (gslot, options, gb) in ghostCycles)
+                if (!ghostDrawLogged)
                 {
-                    var want = options[tick % options.Length];
-                    if (!ReferenceEquals(gslot.Itemstack, want)) gslot.Itemstack = want;
-
-                    // Raw draw: self-clip against the scrolling viewport (skip only when
-                    // fully outside, so partially visible cells still veil).
-                    double top = gb.renderY;
-                    if (top + gb.OuterHeight < vpTop || top > vpBot) continue;
-                    capi.Render.Render2DTexturePremultipliedAlpha(ghostWashTex,
-                        (float)gb.renderX, (float)top,
-                        (float)gb.OuterWidth, (float)gb.OuterHeight);
+                    ghostDrawLogged = true;
+                    var (_, fx, fy) = ghostCycles[0];
+                    capi.Logger.Notification(
+                        "[SymbioticInventories] Ghost watermarks: {0} cell(s), first at screen ({1:0},{2:0}).",
+                        ghostCycles.Count, vx + (fx + cell * 0.5) * g, vy + (fy - scrollY + cell * 0.5) * g);
                 }
             }
 
@@ -1180,11 +1164,6 @@ namespace SymbioticInventories.Gui
             base.Dispose();
             hoverTex?.Dispose();
             hoverTex = null;
-            if (ghostWashTex != 0)
-            {
-                capi.Render.GLDeleteTexture(ghostWashTex);
-                ghostWashTex = 0;
-            }
         }
 
         private void OnNewScrollbarValue(float value)

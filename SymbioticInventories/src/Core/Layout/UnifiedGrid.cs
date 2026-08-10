@@ -189,6 +189,21 @@ namespace SymbioticInventories.Core.Layout
                         plan.Rows = Math.Max(plan.Rows, row + 1);
                     }
 
+                    // RIGHT-TO-LEFT fill (user ask): mirror each slice within its row's
+                    // span, so container rows hug the RIGHT edge and the ragged partial
+                    // row faces inward - joined to the mass above it instead of "sitting
+                    // out there by itself" on the left. The mirror is per-row bijective,
+                    // so disjoint ribbons stay disjoint and the occupancy is unchanged.
+                    foreach (var sl in ribbon.Slices)
+                    {
+                        var (ma, mb) = Span(sl.Row);
+                        sl.Col = ma + (mb - sl.Col - sl.Cols);
+                    }
+                    if (ribbon.Slices.Count > 0)
+                    {
+                        ribbon.StartCell = ribbon.Slices[0].Row * cols + ribbon.Slices[0].Col;
+                    }
+
                     plan.Ribbons.Add(ribbon);
                     plan.TotalCells += s.SlotCount;
                     continue;

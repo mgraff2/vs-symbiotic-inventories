@@ -568,6 +568,17 @@ namespace SymbioticInventories.Gui
             // the grid stayed narrow - a lake of empty space to the right (user screenshot).
             // Now the grid width leads: it fills the landscape, and the strip wraps within it,
             // so the window is exactly grid-wide with nothing dangling.
+            // Machine and stew station discovery happens BEFORE the column choice: their
+            // strip width participates in how wide the grid should grow.
+            machines = Capture?.FindNearbyMachines() ?? new List<Integration.DialogCaptureService.MachineInfo>();
+            double machinesW = 0;
+            foreach (var m in machines) machinesW += IconTile + 6 + m.Slots.Length * LayoutMetrics.Cell + 8;
+            stewInfo = Stew?.FindNearby();
+            double stewW = stewInfo != null
+                ? IconTile + 6 + StewTextW + 3 * (LayoutMetrics.Cell * 0.5 + 2) + 8
+                : 0;
+            machinesW += stewW;
+
             int cols = docked
                 ? Math.Max(4, (int)(availW / LayoutMetrics.Cell))
                 : UnifiedGrid.ChooseCols(frameSlots, availW, availH - craftingH - Pad * 2);
@@ -583,18 +594,22 @@ namespace SymbioticInventories.Gui
             iconMargin = plan.Ribbons.Exists(r => UnifiedGrid.IsLeftBlock(r.Section.Kind))
                 ? LayoutMetrics.Cell * 0.8 : 0;
 
-            // Machine side-station discovery: reserve their corner of the strip before the
-            // vessel tiles compute their wrap width, so the tiles never collide with them.
-            machines = Capture?.FindNearbyMachines() ?? new List<Integration.DialogCaptureService.MachineInfo>();
-            double machinesW = 0;
-            foreach (var m in machines) machinesW += IconTile + 6 + m.Slots.Length * LayoutMetrics.Cell + 8;
-
-            // The stew station shares the machines' corner of the strip.
-            stewInfo = Stew?.FindNearby();
-            double stewW = stewInfo != null
-                ? IconTile + 6 + StewTextW + 3 * (LayoutMetrics.Cell * 0.5 + 2) + 8
-                : 0;
-            machinesW += stewW;
+            // FILL THE WINDOW: the strip (tiles + stations) often forces a wider window
+            // than the flow chose - hand those columns to the GRID instead of leaving
+            // dead space on the right (user: "a lot of room over here - the inventory
+            // should be fluid enough to fill it"). Widen only when the flow has world
+            // containers to reflow; the solo bag block keeps its compact width.
+            if (!docked && plan.Cols == cols)
+            {
+                double estStripW = iconAreaX + 6 * (IconTile + 4) + ChipW + machinesW;
+                int extra = (int)((Math.Min(estStripW, availW) - iconMargin - flowW) / LayoutMetrics.Cell);
+                if (extra > 0)
+                {
+                    cols += extra;
+                    plan = UnifiedGrid.Compute(flowSections, cols);
+                    flowW = plan.Cols * LayoutMetrics.Cell;
+                }
+            }
 
             // Vessel row: group chips + tiles, wrapping beside crafting and bags. ALL
             // numbered sections get a tile - hidden ones render dimmed. Never let the

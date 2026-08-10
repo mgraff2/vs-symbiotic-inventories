@@ -306,6 +306,21 @@ namespace SymbioticInventories.Gui
         public override void OnMouseDown(MouseEvent args)
         {
             if (Suppressed) return;   // invisible under the Options panel: let it take the click
+            try
+            {
+                HandleMouseDown(args);
+            }
+            catch (Exception e)
+            {
+                // A throw here kills the whole client (it already did once, via an
+                // uncomposed bounds in a hit-test). A dead click is never worth a crash.
+                capi.Logger.Warning("[SymbioticInventories] Click handling failed: {0}", e);
+            }
+            base.OnMouseDown(args);
+        }
+
+        private void HandleMouseDown(MouseEvent args)
+        {
             if (IsOpened() && !args.Handled)
             {
                 // Stew station: clicks become the real hand interactions - click acts on
@@ -387,8 +402,6 @@ namespace SymbioticInventories.Gui
                     return;
                 }
             }
-
-            base.OnMouseDown(args);
         }
 
         /// <summary>Hover link, tile -> cells: cursor on a vessel tile lights its ribbon.</summary>
@@ -785,10 +798,14 @@ namespace SymbioticInventories.Gui
                 if (stewInfo != null)
                 {
                     double sy = TitleH;
+                    // The SAME bounds object goes to the composer (the hover element), so
+                    // it gets parented and world-calced - PointInside on an uncomposed
+                    // bounds dereferences a null parent and took the client down (real
+                    // crash: NRE in OnMouseDown while a stew pot was in range).
                     stewPanelBounds = ElementBounds.Fixed(mpx - 4, sy, 4 + IconTile + 6 + StewTextW
                         + 3 * (LayoutMetrics.Cell * 0.5 + 2), LayoutMetrics.Cell);
                     composer.AddHoverText(Lang.Get("symbioticinventories:stew-hint"),
-                        CairoFont.WhiteSmallText().WithFontSize(14), 320, stewPanelBounds.FlatCopy());
+                        CairoFont.WhiteSmallText().WithFontSize(14), 320, stewPanelBounds);
 
                     if (stewInfo.PotIcon != null)
                     {
